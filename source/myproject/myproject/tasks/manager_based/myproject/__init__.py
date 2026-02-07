@@ -17,7 +17,7 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.myproject_env_cfg:MyprojectEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.myproject_env_cfg:MyProjectEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
     },
 )

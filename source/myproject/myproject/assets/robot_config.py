@@ -7,7 +7,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import DelayedPDActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
-from !my_groupx_humanoid.assets import ISAAC_ASSET_DIR
+from myproject.assets import ISAAC_ASSET_DIR
 
 
 MY_ROBOT_CONFIG = ArticulationCfg(
@@ -33,13 +33,13 @@ MY_ROBOT_CONFIG = ArticulationCfg(
             'LL_HR': 0.0,
             'LR_HR': 0.0,
             'LL_HAA': -0.1745,
-            'LR_HAA': -0.1745,
+            'LR_HAA': -0.1745, # 10 degrees
             'LL_HFE': -0.1745,
             'LR_HFE': -0.1745,
             'LL_KFE': 0.3491,
-            'LR_KFE': 0.3491,
-            'LL_FFE': -0.1745,
-            'LR_FFE': -0.1745
+            'LR_KFE': 0.3491, # 20 degrees
+            'LL_FFE': -0.1745, # 10 degrees
+            'LR_FFE': -0.1745 # 10 degrees
         },
     ),
     actuators={
