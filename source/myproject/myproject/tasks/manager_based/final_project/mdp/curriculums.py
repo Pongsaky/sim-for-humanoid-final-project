@@ -57,9 +57,14 @@ def success_rate_proxy(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
     goal_x: float,
+    start_x: float = 0.0,
 ) -> torch.Tensor:
     """Simple logging curriculum term: fraction of envs past goal line at reset."""
     robot = env.scene["robot"]
     env_x = env.scene.env_origins[env_ids, 0]
-    reached = robot.data.root_pos_w[env_ids, 0] >= (env_x + goal_x)
+    goal_x_w = env_x + goal_x
+    if goal_x >= start_x:
+        reached = robot.data.root_pos_w[env_ids, 0] >= goal_x_w
+    else:
+        reached = robot.data.root_pos_w[env_ids, 0] <= goal_x_w
     return reached.float().mean()

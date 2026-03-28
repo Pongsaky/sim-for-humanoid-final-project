@@ -22,10 +22,18 @@ from . import mdp as custom_mdp
 
 FINAL_MAP_USD_PATH = "/home/pongsaky/university/sim-for-humaniod/final_map.usd"
 FINAL_MAP_USD_PRIM_PATH = "/World/ground"
-GOAL_X = 18.0
+FINAL_MAP_SIZE_X = 15.2
+FINAL_MAP_SIZE_Y = 7.7
+CURRICULUM_GOAL_X = 6.0
+CURRICULUM_ZONE_POSITIONS = (1.5, 3.0, 4.5, 6.0)
+MAP_START_POS = (6.0, -2.5, 1.05)
+MAP_START_ROT = (0.0, 0.0, 0.0, 1.0)
+MAP_GOAL_X = -6.8
+MAP_ZONE_POSITIONS = (4.0, 2.0, 0.0, -2.0, -4.5)
+MAP_ENV_SPACING = 18.0
 
 FINAL_PROJECT_CURRICULUM_TERRAINS_CFG = TerrainGeneratorCfg(
-    size=(8.0, 8.0),
+    size=(FINAL_MAP_SIZE_X, FINAL_MAP_SIZE_Y),
     border_width=20.0,
     num_rows=10,
     num_cols=20,
@@ -73,17 +81,25 @@ FINAL_PROJECT_CURRICULUM_TERRAINS_CFG = TerrainGeneratorCfg(
 class FinalProjectRewards(H1Rewards):
     """Reward mix tuned for speed-to-goal locomotion."""
 
-    forward_velocity = RewTerm(func=custom_mdp.forward_velocity_toward_goal, weight=2.0, params={"goal_x": GOAL_X})
-    goal_progress = RewTerm(func=custom_mdp.goal_distance_progress, weight=1.0, params={"goal_x": GOAL_X})
+    forward_velocity = RewTerm(
+        func=custom_mdp.forward_velocity_toward_goal,
+        weight=2.0,
+        params={"goal_x": CURRICULUM_GOAL_X, "start_x": 0.0},
+    )
+    goal_progress = RewTerm(
+        func=custom_mdp.goal_distance_progress,
+        weight=1.0,
+        params={"goal_x": CURRICULUM_GOAL_X, "start_x": 0.0},
+    )
     goal_reached_bonus = RewTerm(
         func=custom_mdp.goal_reached_bonus,
         weight=100.0,
-        params={"goal_x": GOAL_X, "bonus": 1.0},
+        params={"goal_x": CURRICULUM_GOAL_X, "start_x": 0.0, "bonus": 1.0},
     )
     obstacle_zone_crossing = RewTerm(
         func=custom_mdp.zone_crossing_bonus,
         weight=0.75,
-        params={"zone_positions": (3.0, 6.5, 10.0, 13.5, 16.0), "sigma": 0.35},
+        params={"zone_positions": CURRICULUM_ZONE_POSITIONS, "sigma": 0.35},
     )
     low_height_penalty = RewTerm(func=custom_mdp.base_height_penalty, weight=-2.0, params={"min_height": 0.55})
 
@@ -151,7 +167,10 @@ class FinalProjectUnitreeH1EnvCfg(H1RoughEnvCfg):
         self.commands.base_velocity.ranges.heading = (-3.14, 3.14)
 
         self.episode_length_s = 20.0
-        self.terminations.goal_reached = DoneTerm(func=custom_mdp.goal_reached, params={"goal_x": GOAL_X})
+        self.terminations.goal_reached = DoneTerm(
+            func=custom_mdp.goal_reached,
+            params={"goal_x": CURRICULUM_GOAL_X, "start_x": 0.0},
+        )
 
 
 @configclass
@@ -171,9 +190,8 @@ class FinalProjectUnitreeH1MapEnvCfg(FinalProjectUnitreeH1EnvCfg):
     def __post_init__(self):
         super().__post_init__()
 
-        # Use a flat plane under the map and disable terrain-level curriculum for map adaptation.
-        self.scene.terrain.terrain_type = "plane"
-        self.scene.terrain.terrain_generator = None
+        # Disable procedural terrain and terrain-level curriculum for map adaptation.
+        self.scene.terrain = None
         self.curriculum.terrain_levels = None
 
         # Duplicate map per environment (smaller env count recommended for this stage).
@@ -185,6 +203,27 @@ class FinalProjectUnitreeH1MapEnvCfg(FinalProjectUnitreeH1EnvCfg):
             ),
         )
 
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.params["pose_range"] = {
+            "x": (0.0, 0.0),
+            "y": (0.0, 0.0),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (0.0, 0.0),
+        }
+
+        self.rewards.forward_velocity.params["goal_x"] = MAP_GOAL_X
+        self.rewards.forward_velocity.params["start_x"] = MAP_START_POS[0]
+        self.rewards.goal_progress.params["goal_x"] = MAP_GOAL_X
+        self.rewards.goal_progress.params["start_x"] = MAP_START_POS[0]
+        self.rewards.goal_reached_bonus.params["goal_x"] = MAP_GOAL_X
+        self.rewards.goal_reached_bonus.params["start_x"] = MAP_START_POS[0]
+        self.rewards.obstacle_zone_crossing.params["zone_positions"] = MAP_ZONE_POSITIONS
+        self.terminations.goal_reached.params["goal_x"] = MAP_GOAL_X
+        self.terminations.goal_reached.params["start_x"] = MAP_START_POS[0]
+
         # Preserve the observation width from the curriculum stage without depending on map mesh parsing.
         self.scene.height_scanner = None
         self.observations.policy.height_scan = ObsTerm(
@@ -193,15 +232,15 @@ class FinalProjectUnitreeH1MapEnvCfg(FinalProjectUnitreeH1EnvCfg):
         )
 
         # Map stage is more expensive, so start smaller by default.
-        self.scene.num_envs = 256
-        self.scene.env_spacing = 8.0
+        self.scene.num_envs = 64
+        self.scene.env_spacing = MAP_ENV_SPACING
 
 
 @configclass
 class FinalProjectUnitreeH1MapEnvCfg_PLAY(FinalProjectUnitreeH1MapEnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        self.scene.num_envs = 8
+        self.scene.num_envs = 1
         self.observations.policy.enable_corruption = False
         self.events.push_robot = None
 
@@ -214,6 +253,8 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
         super().__post_init__()
 
         self.scene.robot = UNITREE_H1_MINIMAL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
         # The map needs to exist in every cloned environment. A single USD terrain import only creates one global map.
         self.scene.terrain = None
         self.scene.final_map = AssetBaseCfg(
@@ -223,10 +264,18 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
                 usd_prim_path=FINAL_MAP_USD_PRIM_PATH,
             ),
         )
+        self.events.reset_base.params["pose_range"] = {
+            "x": (0.0, 0.0),
+            "y": (0.0, 0.0),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (0.0, 0.0),
+        }
 
         # Map duplication is heavy enough that a smaller default is more realistic.
-        self.scene.num_envs = 256
-        self.scene.env_spacing = 8.0
+        self.scene.num_envs = 64
+        self.scene.env_spacing = MAP_ENV_SPACING
 
 
 @configclass
