@@ -25,6 +25,12 @@ def add_rsl_rl_args(parser: argparse.ArgumentParser):
     arg_group.add_argument(
         "--experiment_name", type=str, default=None, help="Name of the experiment folder where logs will be stored."
     )
+    arg_group.add_argument(
+        "--load_experiment",
+        type=str,
+        default=None,
+        help="Name of the experiment folder to load checkpoints from when resuming.",
+    )
     arg_group.add_argument("--run_name", type=str, default=None, help="Run name suffix to the log directory.")
     # -- load arguments
     arg_group.add_argument("--resume", action="store_true", default=False, help="Whether to resume from a checkpoint.")
@@ -73,6 +79,8 @@ def update_rsl_rl_cfg(agent_cfg: RslRlBaseRunnerCfg, args_cli: argparse.Namespac
         if args_cli.seed == -1:
             args_cli.seed = random.randint(0, 10000)
         agent_cfg.seed = args_cli.seed
+    if hasattr(args_cli, "experiment_name") and args_cli.experiment_name is not None:
+        agent_cfg.experiment_name = args_cli.experiment_name
     if args_cli.resume is not None:
         agent_cfg.resume = args_cli.resume
     if args_cli.load_run is not None:

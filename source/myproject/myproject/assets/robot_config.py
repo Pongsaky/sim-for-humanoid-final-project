@@ -12,7 +12,8 @@ from myproject.assets import ISAAC_ASSET_DIR
 
 MY_ROBOT_CONFIG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAAC_ASSET_DIR}/robots/poclegs.usd",
+        # usd_path=f"{ISAAC_ASSET_DIR}/robots/poclegs.usd",
+        usd_path=f"{ISAAC_ASSET_DIR}/robots/mod_poclegs_2.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -28,7 +29,7 @@ MY_ROBOT_CONFIG = ArticulationCfg(
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.449),
+        pos=(0.0, 0.0, 0.6),
         joint_pos={
             'LL_HR': 0.0,
             'LR_HR': 0.0,
