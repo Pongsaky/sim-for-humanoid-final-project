@@ -13,48 +13,37 @@ if TYPE_CHECKING:
 def forward_velocity_toward_goal(
     env: ManagerBasedRLEnv,
     goal_x: float,
-    start_x: float = 0.0,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Reward world-frame velocity toward the goal line."""
+    """Reward forward world-frame velocity toward a goal line located at +x in each env frame."""
     asset = env.scene[asset_cfg.name]
     goal_dir_w = torch.zeros_like(asset.data.root_lin_vel_w[:, :2])
-    goal_dir_w[:, 0] = 1.0 if goal_x >= start_x else -1.0
+    goal_dir_w[:, 0] = 1.0
     return torch.sum(asset.data.root_lin_vel_w[:, :2] * goal_dir_w, dim=1)
 
 
 def goal_distance_progress(
     env: ManagerBasedRLEnv,
     goal_x: float,
-    start_x: float = 0.0,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Dense normalized progress reward along the arena x-axis."""
+    """Dense progress reward from normalized x-position in the environment frame."""
     asset = env.scene[asset_cfg.name]
     env_x = env.scene.env_origins[:, 0]
-    start_x_w = env_x + start_x
-    goal_x_w = env_x + goal_x
-    denom = torch.full_like(start_x_w, goal_x - start_x).clamp(min=-1.0e6, max=1.0e6)
-    denom = torch.where(torch.abs(denom) < 1.0e-6, torch.ones_like(denom), denom)
-    progress = (asset.data.root_pos_w[:, 0] - start_x_w) / denom
+    progress = (asset.data.root_pos_w[:, 0] - env_x) / max(goal_x, 1e-6)
     return torch.clamp(progress, min=0.0, max=1.0)
 
 
 def goal_reached_bonus(
     env: ManagerBasedRLEnv,
     goal_x: float,
-    start_x: float = 0.0,
     bonus: float = 1.0,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """One-step bonus whenever robot has crossed the goal x-line."""
     asset = env.scene[asset_cfg.name]
     env_x = env.scene.env_origins[:, 0]
-    goal_x_w = env_x + goal_x
-    if goal_x >= start_x:
-        reached = asset.data.root_pos_w[:, 0] >= goal_x_w
-    else:
-        reached = asset.data.root_pos_w[:, 0] <= goal_x_w
+    reached = asset.data.root_pos_w[:, 0] >= (env_x + goal_x)
     return reached.float() * bonus
 
 
