@@ -57,6 +57,7 @@ import os
 import time
 
 import gymnasium as gym
+import myproject.tasks  # noqa: F401
 import torch
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -76,8 +77,6 @@ from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_che
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
-
-import myproject.tasks  # noqa: F401
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -114,6 +113,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
+    finalize_env_cfg = getattr(env_cfg, "finalize_after_overrides", None)
+    if callable(finalize_env_cfg):
+        finalize_env_cfg()
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)

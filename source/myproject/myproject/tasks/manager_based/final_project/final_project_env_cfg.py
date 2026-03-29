@@ -1,6 +1,5 @@
 import isaaclab.sim as sim_utils
 import isaaclab.terrains as terrain_gen
-from isaaclab.assets import AssetBaseCfg
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -16,16 +15,36 @@ from isaaclab_tasks.manager_based.locomotion.velocity.config.h1.flat_env_cfg imp
 from isaaclab_tasks.manager_based.locomotion.velocity.config.h1.rough_env_cfg import H1Rewards, H1RoughEnvCfg
 
 from myproject.assets.unitree_humanoid_config import UNITREE_H1_MINIMAL_CFG
-from myproject.assets.usd_prim_reference_cfg import UsdFileWithPrimPathCfg
 
 from . import mdp as custom_mdp
 
-FINAL_MAP_USD_PATH = "/home/pongsaky/university/sim-for-humaniod/final_map.usd"
+FINAL_MAP_USD_PATH = "/home/pongsaky/university/sim-for-humaniod/final_map_2.usd"
 FINAL_MAP_USD_PRIM_PATH = "/World/ground"
-GOAL_X = 18.0
+# Real bounds measured from final_map_2.usd:
+#   min = (-7.6, -3.85, -1.0)
+#   max = (7.6, 3.85, 0.19)
+#   size = (15.2, 7.7, 1.19)
+# We keep the curriculum terrain tiles at the same horizontal footprint as the map so obstacle
+# spacing and traversal distance are closer before transferring to the real arena.
+REAL_MAP_SIZE_XY = (15.2, 7.7)
+GOAL_X = 6.8
+MAP_ENV_SPACING = 0
+MAP_START_POS = (-6.5, 0, 1.05)
+MAP_START_ROT = (1.0, 0.0, 0.0, 0.0)
+MAP_SPAWN_GRID_SPACING = (0, 1)
+MAP_SPAWN_GRID_NUM_COLS = 1
+
+
+def _make_final_map_terrain_cfg(num_envs: int, env_spacing: float) -> TerrainImporterCfg:
+    return TerrainImporterCfg(
+        prim_path="/World/ground",
+        terrain_type="usd",
+        usd_path=FINAL_MAP_USD_PATH,
+    )
+
 
 FINAL_PROJECT_CURRICULUM_TERRAINS_CFG = TerrainGeneratorCfg(
-    size=(8.0, 8.0),
+    size=REAL_MAP_SIZE_XY,
     border_width=20.0,
     num_rows=10,
     num_cols=20,
@@ -73,8 +92,10 @@ FINAL_PROJECT_CURRICULUM_TERRAINS_CFG = TerrainGeneratorCfg(
 class FinalProjectRewards(H1Rewards):
     """Reward mix tuned for speed-to-goal locomotion."""
 
-    forward_velocity = RewTerm(func=custom_mdp.forward_velocity_toward_goal, weight=2.0, params={"goal_x": GOAL_X})
-    goal_progress = RewTerm(func=custom_mdp.goal_distance_progress, weight=1.0, params={"goal_x": GOAL_X})
+    # Explicit forward-drive terms so the policy prefers pushing through obstacles instead of
+    # idling safely in front of gaps or rough patches.
+    forward_velocity = RewTerm(func=custom_mdp.forward_velocity_toward_goal, weight=3.0, params={"goal_x": GOAL_X})
+    goal_progress = RewTerm(func=custom_mdp.goal_distance_progress, weight=1.5, params={"goal_x": GOAL_X})
     goal_reached_bonus = RewTerm(
         func=custom_mdp.goal_reached_bonus,
         weight=100.0,
@@ -83,7 +104,7 @@ class FinalProjectRewards(H1Rewards):
     obstacle_zone_crossing = RewTerm(
         func=custom_mdp.zone_crossing_bonus,
         weight=0.75,
-        params={"zone_positions": (3.0, 6.5, 10.0, 13.5, 16.0), "sigma": 0.35},
+        params={"zone_positions": (1.5, 3.0, 4.5, 6.0), "sigma": 0.35},
     )
     low_height_penalty = RewTerm(func=custom_mdp.base_height_penalty, weight=-2.0, params={"min_height": 0.55})
 
@@ -93,6 +114,20 @@ class FinalProjectRewards(H1Rewards):
     dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
     termination_penalty = RewTerm(func=mdp.is_terminated, weight=-10.0)
+
+
+@configclass
+class FinalProjectBaselineRewards(H1Rewards):
+    """Minimal goal-conditioned baseline on the real map without curriculum."""
+
+    forward_velocity = RewTerm(func=custom_mdp.forward_velocity_toward_goal, weight=2.0, params={"goal_x": GOAL_X})
+    goal_progress = RewTerm(func=custom_mdp.goal_distance_progress, weight=1.0, params={"goal_x": GOAL_X})
+    goal_reached_bonus = RewTerm(
+        func=custom_mdp.goal_reached_bonus,
+        weight=100.0,
+        params={"goal_x": GOAL_X, "bonus": 1.0},
+    )
+    low_height_penalty = RewTerm(func=custom_mdp.base_height_penalty, weight=-2.0, params={"min_height": 0.55})
 
 
 @configclass
@@ -171,19 +206,9 @@ class FinalProjectUnitreeH1MapEnvCfg(FinalProjectUnitreeH1EnvCfg):
     def __post_init__(self):
         super().__post_init__()
 
-        # Use a flat plane under the map and disable terrain-level curriculum for map adaptation.
-        self.scene.terrain.terrain_type = "plane"
-        self.scene.terrain.terrain_generator = None
+        # Load the arena map through the stock terrain importer instead of as a separate scene asset.
+        self.scene.final_map = None
         self.curriculum.terrain_levels = None
-
-        # Duplicate map per environment (smaller env count recommended for this stage).
-        self.scene.final_map = AssetBaseCfg(
-            prim_path="{ENV_REGEX_NS}/final_map",
-            spawn=UsdFileWithPrimPathCfg(
-                usd_path=FINAL_MAP_USD_PATH,
-                usd_prim_path=FINAL_MAP_USD_PRIM_PATH,
-            ),
-        )
 
         # Preserve the observation width from the curriculum stage without depending on map mesh parsing.
         self.scene.height_scanner = None
@@ -193,8 +218,22 @@ class FinalProjectUnitreeH1MapEnvCfg(FinalProjectUnitreeH1EnvCfg):
         )
 
         # Map stage is more expensive, so start smaller by default.
-        self.scene.num_envs = 256
-        self.scene.env_spacing = 8.0
+        self.scene.num_envs = 64
+        self.scene.env_spacing = MAP_ENV_SPACING
+        self.finalize_after_overrides()
+
+    def finalize_after_overrides(self):
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_from_spawn_grid
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "spacing_xy": MAP_SPAWN_GRID_SPACING,
+            "num_cols": MAP_SPAWN_GRID_NUM_COLS,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
 
 
 @configclass
@@ -204,29 +243,43 @@ class FinalProjectUnitreeH1MapEnvCfg_PLAY(FinalProjectUnitreeH1MapEnvCfg):
         self.scene.num_envs = 8
         self.observations.policy.enable_corruption = False
         self.events.push_robot = None
+        self.finalize_after_overrides()
 
 
 @configclass
 class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
     """Baseline: stock H1 flat locomotion setup, trained from scratch on the final map."""
 
+    rewards: FinalProjectBaselineRewards = FinalProjectBaselineRewards()
+
     def __post_init__(self):
         super().__post_init__()
 
         self.scene.robot = UNITREE_H1_MINIMAL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        # The map needs to exist in every cloned environment. A single USD terrain import only creates one global map.
-        self.scene.terrain = None
-        self.scene.final_map = AssetBaseCfg(
-            prim_path="{ENV_REGEX_NS}/final_map",
-            spawn=UsdFileWithPrimPathCfg(
-                usd_path=FINAL_MAP_USD_PATH,
-                usd_prim_path=FINAL_MAP_USD_PRIM_PATH,
-            ),
-        )
+        self.scene.final_map = None
+        self.scene.num_envs = 64
+        self.scene.env_spacing = MAP_ENV_SPACING
+        self.commands.base_velocity.heading_command = False
+        self.commands.base_velocity.rel_heading_envs = 0.0
+        self.commands.base_velocity.ranges.lin_vel_x = (1.0, 1.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self.commands.base_velocity.ranges.heading = None
+        self.terminations.goal_reached = DoneTerm(func=custom_mdp.goal_reached, params={"goal_x": GOAL_X})
+        self.finalize_after_overrides()
 
-        # Map duplication is heavy enough that a smaller default is more realistic.
-        self.scene.num_envs = 256
-        self.scene.env_spacing = 8.0
+    def finalize_after_overrides(self):
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_from_spawn_grid
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "spacing_xy": MAP_SPAWN_GRID_SPACING,
+            "num_cols": MAP_SPAWN_GRID_NUM_COLS,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
 
 
 @configclass
@@ -235,3 +288,4 @@ class FinalProjectUnitreeH1BaselineEnvCfg_PLAY(FinalProjectUnitreeH1BaselineEnvC
         super().__post_init__()
         self.scene.num_envs = 1
         self.observations.policy.enable_corruption = False
+        self.finalize_after_overrides()
