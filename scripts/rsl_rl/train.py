@@ -20,7 +20,9 @@ parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
-parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
+parser.add_argument(
+    "--num_envs", "--num_env", dest="num_envs", type=int, default=None, help="Number of environments to simulate."
+)
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
     "--agent", type=str, default="rsl_rl_cfg_entry_point", help="Name of the RL agent configuration entry point."
@@ -79,6 +81,7 @@ import logging
 import os
 import time
 from datetime import datetime
+from types import MethodType
 
 import gymnasium as gym
 import torch
@@ -111,6 +114,83 @@ torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
 
+def _ensure_tensor_finite(name: str, tensor: torch.Tensor, iteration: int | None = None) -> None:
+    """Raise a clear error as soon as NaN/Inf appears in training state."""
+
+    if not torch.is_tensor(tensor):
+        return
+    if tensor.numel() == 0:
+        return
+    if torch.isfinite(tensor).all():
+        return
+
+    prefix = f"[iteration {iteration}] " if iteration is not None else ""
+    finite_mask = torch.isfinite(tensor)
+    non_finite = (~finite_mask).sum().item()
+    finite_values = tensor[finite_mask]
+    if finite_values.numel() > 0:
+        finite_min = finite_values.min().item()
+        finite_max = finite_values.max().item()
+    else:
+        finite_min = float("nan")
+        finite_max = float("nan")
+    raise RuntimeError(
+        f"{prefix}Non-finite values detected in {name}: {non_finite} / {tensor.numel()} values are NaN/Inf "
+        f"(finite range: [{finite_min}, {finite_max}])."
+    )
+
+
+def _ensure_module_parameters_finite(module: torch.nn.Module, name: str, iteration: int | None = None) -> None:
+    """Validate every parameter tensor in a module."""
+
+    for param_name, param in module.named_parameters():
+        _ensure_tensor_finite(f"{name}.{param_name}", param.data, iteration=iteration)
+
+
+def _install_training_diagnostics(runner) -> None:
+    """Attach local numeric guards without patching upstream packages."""
+
+    policy = runner.alg.policy
+    state = {"iteration": 0}
+
+    original_update_distribution = policy._update_distribution
+    original_update = runner.alg.update
+
+    def guarded_update_distribution(self, obs):
+        if hasattr(obs, "items"):
+            for obs_name, obs_tensor in obs.items():
+                _ensure_tensor_finite(f"policy_obs.{obs_name}", obs_tensor, iteration=state["iteration"])
+        else:
+            _ensure_tensor_finite("policy_obs", obs, iteration=state["iteration"])
+
+        original_update_distribution(obs)
+
+        _ensure_tensor_finite("policy.action_mean", self.action_mean, iteration=state["iteration"])
+        _ensure_tensor_finite("policy.action_std", self.action_std, iteration=state["iteration"])
+
+    def guarded_update(self):
+        state["iteration"] += 1
+        iteration = state["iteration"]
+        _ensure_module_parameters_finite(self.policy, "policy", iteration=iteration)
+        if hasattr(self.policy, "log_std"):
+            _ensure_tensor_finite("policy.log_std", self.policy.log_std.data, iteration=iteration)
+        elif hasattr(self.policy, "std"):
+            _ensure_tensor_finite("policy.std", self.policy.std.data, iteration=iteration)
+
+        loss_dict = original_update()
+
+        _ensure_module_parameters_finite(self.policy, "policy", iteration=iteration)
+        if hasattr(self.policy, "action_std"):
+            _ensure_tensor_finite("policy.action_std", self.policy.action_std, iteration=iteration)
+        if hasattr(self.policy, "action_mean"):
+            _ensure_tensor_finite("policy.action_mean", self.policy.action_mean, iteration=iteration)
+
+        return loss_dict
+
+    policy._update_distribution = MethodType(guarded_update_distribution, policy)
+    runner.alg.update = MethodType(guarded_update, runner.alg)
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Train with RSL-RL agent."""
@@ -125,6 +205,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    execution_mode = "headless" if app_launcher._headless else "gui"
+    env_cfg.shared_arena_physx_profile = "training_headless" if app_launcher._headless else "training_gui"
     # check for invalid combination of CPU device with distributed training
     if args_cli.distributed and args_cli.device is not None and "cpu" in args_cli.device:
         raise ValueError(
@@ -165,6 +247,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
+    finalize_env_cfg = getattr(env_cfg, "finalize_after_overrides", None)
+    if callable(finalize_env_cfg):
+        finalize_env_cfg()
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -199,6 +284,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
+    print(
+        "[INFO] Resolved runner config: "
+        f"task={args_cli.task}, num_envs={env.num_envs}, device={agent_cfg.device}, "
+        f"execution_mode={execution_mode}, shared_arena_physx_profile={env_cfg.shared_arena_physx_profile}, "
+        f"noise_std_type={agent_cfg.policy.noise_std_type}, init_noise_std={agent_cfg.policy.init_noise_std}, "
+        f"lr={agent_cfg.algorithm.learning_rate}, desired_kl={agent_cfg.algorithm.desired_kl}, "
+        f"entropy_coef={agent_cfg.algorithm.entropy_coef}"
+    )
+    if not app_launcher._headless and "Template-Final-Project-Unitree-H1" in args_cli.task:
+        print(
+            "[WARN] GUI mode uses reduced PhysX capacities for shared-arena tasks. "
+            "Prefer low env counts in non-headless runs to avoid GPU memory pressure."
+        )
+
     # create runner from rsl-rl
     if agent_cfg.class_name == "OnPolicyRunner":
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
@@ -213,6 +312,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
+
+    _ensure_module_parameters_finite(runner.alg.policy, "policy")
+    if hasattr(runner.alg.policy, "log_std"):
+        _ensure_tensor_finite("policy.log_std", runner.alg.policy.log_std.data)
+    elif hasattr(runner.alg.policy, "std"):
+        _ensure_tensor_finite("policy.std", runner.alg.policy.std.data)
+    _install_training_diagnostics(runner)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

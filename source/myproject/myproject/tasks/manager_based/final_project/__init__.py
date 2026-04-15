@@ -61,3 +61,43 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1BaselinePPORunnerCfg",
     },
 )
+
+gym.register(
+    id="Template-Final-Project-Unitree-H1-Stability-Arena-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1StabilityArenaEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Template-Final-Project-Unitree-H1-Stability-Arena-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1StabilityArenaEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Template-Final-Project-Unitree-H1-Crossing-Arena-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1CrossingArenaEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Template-Final-Project-Unitree-H1-Crossing-Arena-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1CrossingArenaEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1PPORunnerCfg",
+    },
+)
