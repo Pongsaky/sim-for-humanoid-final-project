@@ -1,0 +1,636 @@
+{
+  "source_usd": "test_map.usd",
+  "segment_count": 30,
+  "segments": [
+    {
+      "segment_id": 0,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_00_id_00.usda",
+      "y_min": -120.0,
+      "y_max": -112.0,
+      "nominal_y_min": -120.0,
+      "nominal_y_max": -112.0,
+      "center_y_removed": 0.0,
+      "point_count": 5340,
+      "triangle_count": 12862,
+      "bounds_min": [
+        -4.0,
+        -120.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        -112.0,
+        0.07500000298023224
+      ]
+    },
+    {
+      "segment_id": 1,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_01_id_01.usda",
+      "y_min": -112.0,
+      "y_max": -104.0,
+      "nominal_y_min": -112.0,
+      "nominal_y_max": -104.0,
+      "center_y_removed": 0.0,
+      "point_count": 5361,
+      "triangle_count": 12880,
+      "bounds_min": [
+        -4.0,
+        -112.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        -104.0,
+        0.07500000298023224
+      ]
+    },
+    {
+      "segment_id": 2,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_02_id_02.usda",
+      "y_min": -104.0,
+      "y_max": -96.0,
+      "nominal_y_min": -104.0,
+      "nominal_y_max": -96.0,
+      "center_y_removed": 0.0,
+      "point_count": 200,
+      "triangle_count": 156,
+      "bounds_min": [
+        -4.0,
+        -104.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        -96.0,
+        0.0
+      ]
+    },
+    {
+      "segment_id": 3,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_03_id_03.usda",
+      "y_min": -96.0,
+      "y_max": -88.0,
+      "nominal_y_min": -96.0,
+      "nominal_y_max": -88.0,
+      "center_y_removed": 0.0,
+      "point_count": 6565,
+      "triangle_count": 12802,
+      "bounds_min": [
+        -4.0,
+        -96.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        -88.0,
+        0.054999999701976776
+      ]
+    },
+    {
+      "segment_id": 4,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_04_id_04.usda",
+      "y_min": -88.0,
+      "y_max": -80.0,
+      "nominal_y_min": -88.0,
+      "nominal_y_max": -80.0,
+      "center_y_removed": 0.0,
+      "point_count": 6654,
+      "triangle_count": 12831,
+      "bounds_min": [
+        -4.0,
+        -88.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        -80.0,
+        0.14000000059604645
+      ]
+    },
+    {
+      "segment_id": 5,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_05_id_05.usda",
+      "y_min": -80.0,
+      "y_max": -72.0,
+      "nominal_y_min": -80.0,
+      "nominal_y_max": -72.0,
+      "center_y_removed": 0.0,
+      "point_count": 6561,
+      "triangle_count": 12800,
+      "bounds_min": [
+        -4.0,
+        -80.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        -72.0,
+        0.054999999701976776
+      ]
+    },
+    {
+      "segment_id": 6,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_06_id_06.usda",
+      "y_min": -72.0,
+      "y_max": -64.0,
+      "nominal_y_min": -72.0,
+      "nominal_y_max": -64.0,
+      "center_y_removed": 0.0,
+      "point_count": 6613,
+      "triangle_count": 12818,
+      "bounds_min": [
+        -4.0,
+        -72.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        -64.0,
+        0.48500001430511475
+      ]
+    },
+    {
+      "segment_id": 7,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_07_id_07.usda",
+      "y_min": -64.0,
+      "y_max": -56.0,
+      "nominal_y_min": -64.0,
+      "nominal_y_max": -56.0,
+      "center_y_removed": 0.0,
+      "point_count": 40,
+      "triangle_count": 60,
+      "bounds_min": [
+        -4.0,
+        -64.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        -56.0,
+        0.0
+      ]
+    },
+    {
+      "segment_id": 8,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_08_id_08.usda",
+      "y_min": -56.0,
+      "y_max": -48.0,
+      "nominal_y_min": -56.0,
+      "nominal_y_max": -48.0,
+      "center_y_removed": 0.0,
+      "point_count": 6569,
+      "triangle_count": 12804,
+      "bounds_min": [
+        -4.0,
+        -56.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        -48.0,
+        0.625
+      ]
+    },
+    {
+      "segment_id": 9,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_09_id_09.usda",
+      "y_min": -48.0,
+      "y_max": -40.0,
+      "nominal_y_min": -48.0,
+      "nominal_y_max": -40.0,
+      "center_y_removed": 0.0,
+      "point_count": 40,
+      "triangle_count": 60,
+      "bounds_min": [
+        -4.0,
+        -48.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        -40.0,
+        0.0
+      ]
+    },
+    {
+      "segment_id": 10,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_10_id_10.usda",
+      "y_min": -40.0,
+      "y_max": -32.0,
+      "nominal_y_min": -40.0,
+      "nominal_y_max": -32.0,
+      "center_y_removed": 0.0,
+      "point_count": 6565,
+      "triangle_count": 12802,
+      "bounds_min": [
+        -4.0,
+        -40.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        -32.0,
+        0.14000000059604645
+      ]
+    },
+    {
+      "segment_id": 11,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_11_id_11.usda",
+      "y_min": -32.0,
+      "y_max": -24.0,
+      "nominal_y_min": -32.0,
+      "nominal_y_max": -24.0,
+      "center_y_removed": 0.0,
+      "point_count": 6563,
+      "triangle_count": 12802,
+      "bounds_min": [
+        -4.0,
+        -32.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        -24.0,
+        0.03500000014901161
+      ]
+    },
+    {
+      "segment_id": 12,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_12_id_12.usda",
+      "y_min": -24.0,
+      "y_max": -16.0,
+      "nominal_y_min": -24.0,
+      "nominal_y_max": -16.0,
+      "center_y_removed": 0.0,
+      "point_count": 40,
+      "triangle_count": 60,
+      "bounds_min": [
+        -4.0,
+        -24.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        -16.0,
+        0.0
+      ]
+    },
+    {
+      "segment_id": 13,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_13_id_13.usda",
+      "y_min": -16.0,
+      "y_max": -8.0,
+      "nominal_y_min": -16.0,
+      "nominal_y_max": -8.0,
+      "center_y_removed": 0.0,
+      "point_count": 6569,
+      "triangle_count": 12804,
+      "bounds_min": [
+        -4.0,
+        -16.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        -8.0,
+        0.41999998688697815
+      ]
+    },
+    {
+      "segment_id": 14,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_14_id_14.usda",
+      "y_min": -8.0,
+      "y_max": 0.0,
+      "nominal_y_min": -8.0,
+      "nominal_y_max": 0.0,
+      "center_y_removed": 0.0,
+      "point_count": 40,
+      "triangle_count": 60,
+      "bounds_min": [
+        -4.0,
+        -8.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "segment_id": 15,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_15_id_15.usda",
+      "y_min": 0.0,
+      "y_max": 8.0,
+      "nominal_y_min": 0.0,
+      "nominal_y_max": 8.0,
+      "center_y_removed": 0.0,
+      "point_count": 6569,
+      "triangle_count": 12804,
+      "bounds_min": [
+        -4.0,
+        0.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        8.0,
+        0.07000000029802322
+      ]
+    },
+    {
+      "segment_id": 16,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_16_id_16.usda",
+      "y_min": 8.0,
+      "y_max": 16.0,
+      "nominal_y_min": 8.0,
+      "nominal_y_max": 16.0,
+      "center_y_removed": 0.0,
+      "point_count": 85,
+      "triangle_count": 75,
+      "bounds_min": [
+        -4.0,
+        8.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        16.0,
+        0.0
+      ]
+    },
+    {
+      "segment_id": 17,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_17_id_17.usda",
+      "y_min": 16.0,
+      "y_max": 24.0,
+      "nominal_y_min": 16.0,
+      "nominal_y_max": 24.0,
+      "center_y_removed": 0.0,
+      "point_count": 6565,
+      "triangle_count": 12802,
+      "bounds_min": [
+        -4.0,
+        16.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        24.0,
+        0.054999999701976776
+      ]
+    },
+    {
+      "segment_id": 18,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_18_id_18.usda",
+      "y_min": 24.0,
+      "y_max": 32.0,
+      "nominal_y_min": 24.0,
+      "nominal_y_max": 32.0,
+      "center_y_removed": 0.0,
+      "point_count": 6609,
+      "triangle_count": 12816,
+      "bounds_min": [
+        -4.0,
+        24.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        32.0,
+        0.14000000059604645
+      ]
+    },
+    {
+      "segment_id": 19,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_19_id_19.usda",
+      "y_min": 32.0,
+      "y_max": 40.0,
+      "nominal_y_min": 32.0,
+      "nominal_y_max": 40.0,
+      "center_y_removed": 0.0,
+      "point_count": 6561,
+      "triangle_count": 12800,
+      "bounds_min": [
+        -4.0,
+        32.0,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        40.0,
+        0.14000000059604645
+      ]
+    },
+    {
+      "segment_id": 20,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_20_id_20.usda",
+      "y_min": 40.0,
+      "y_max": 48.0,
+      "nominal_y_min": 40.0,
+      "nominal_y_max": 48.0,
+      "center_y_removed": 0.0,
+      "point_count": 6561,
+      "triangle_count": 12800,
+      "bounds_min": [
+        -4.0,
+        40.0,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        48.0,
+        0.41999998688697815
+      ]
+    },
+    {
+      "segment_id": 21,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_21_id_21.usda",
+      "y_min": 48.0,
+      "y_max": 56.0,
+      "nominal_y_min": 48.0,
+      "nominal_y_max": 56.0,
+      "center_y_removed": 0.0,
+      "point_count": 6565,
+      "triangle_count": 12802,
+      "bounds_min": [
+        -4.0,
+        48.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        56.0,
+        0.625
+      ]
+    },
+    {
+      "segment_id": 22,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_22_id_22.usda",
+      "y_min": 56.0,
+      "y_max": 64.0,
+      "nominal_y_min": 56.0,
+      "nominal_y_max": 64.0,
+      "center_y_removed": 0.0,
+      "point_count": 44,
+      "triangle_count": 62,
+      "bounds_min": [
+        -4.0,
+        56.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        64.0,
+        0.0
+      ]
+    },
+    {
+      "segment_id": 23,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_23_id_23.usda",
+      "y_min": 64.0,
+      "y_max": 72.0,
+      "nominal_y_min": 64.0,
+      "nominal_y_max": 72.0,
+      "center_y_removed": 0.0,
+      "point_count": 44,
+      "triangle_count": 62,
+      "bounds_min": [
+        -4.0,
+        64.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        72.0,
+        0.0
+      ]
+    },
+    {
+      "segment_id": 24,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_24_id_24.usda",
+      "y_min": 72.0,
+      "y_max": 80.0,
+      "nominal_y_min": 72.0,
+      "nominal_y_max": 80.0,
+      "center_y_removed": 0.0,
+      "point_count": 6613,
+      "triangle_count": 12818,
+      "bounds_min": [
+        -4.0,
+        72.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        80.0,
+        0.14000000059604645
+      ]
+    },
+    {
+      "segment_id": 25,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_25_id_25.usda",
+      "y_min": 80.0,
+      "y_max": 88.0,
+      "nominal_y_min": 80.0,
+      "nominal_y_max": 88.0,
+      "center_y_removed": 0.0,
+      "point_count": 6565,
+      "triangle_count": 12802,
+      "bounds_min": [
+        -4.0,
+        80.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        88.0,
+        0.054999999701976776
+      ]
+    },
+    {
+      "segment_id": 26,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_26_id_26.usda",
+      "y_min": 88.0,
+      "y_max": 96.0,
+      "nominal_y_min": 88.0,
+      "nominal_y_max": 96.0,
+      "center_y_removed": 0.0,
+      "point_count": 88,
+      "triangle_count": 76,
+      "bounds_min": [
+        -4.0,
+        88.0,
+        -10.0
+      ],
+      "bounds_max": [
+        4.0,
+        96.0,
+        0.0
+      ]
+    },
+    {
+      "segment_id": 27,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_27_id_27.usda",
+      "y_min": 96.0,
+      "y_max": 104.0,
+      "nominal_y_min": 96.0,
+      "nominal_y_max": 104.0,
+      "center_y_removed": 0.0,
+      "point_count": 6565,
+      "triangle_count": 12802,
+      "bounds_min": [
+        -4.0,
+        96.0,
+        -1.0
+      ],
+      "bounds_max": [
+        4.0,
+        104.0,
+        0.6949999928474426
+      ]
+    },
+    {
+      "segment_id": 28,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_28_id_28.usda",
+      "y_min": 104.0,
+      "y_max": 112.0,
+      "nominal_y_min": 104.0,
+      "nominal_y_max": 112.0,
+      "center_y_removed": 0.0,
+      "point_count": 6561,
+      "triangle_count": 12800,
+      "bounds_min": [
+        -4.0,
+        104.0,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        112.0,
+        0.41999998688697815
+      ]
+    },
+    {
+      "segment_id": 29,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_aligned_patches/seg_29_id_29.usda",
+      "y_min": 112.0,
+      "y_max": 120.0,
+      "nominal_y_min": 112.0,
+      "nominal_y_max": 120.0,
+      "center_y_removed": 0.0,
+      "point_count": 6559,
+      "triangle_count": 12800,
+      "bounds_min": [
+        -4.0,
+        112.0,
+        -0.04500000178813934
+      ],
+      "bounds_max": [
+        4.0,
+        120.0,
+        0.03500000014901161
+      ]
+    }
+  ]
+}

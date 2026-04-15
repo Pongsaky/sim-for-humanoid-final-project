@@ -1,0 +1,227 @@
+{
+  "usd_path": "crossing_arena.usda",
+  "rows": 3,
+  "cols": 6,
+  "gap": 0.5,
+  "rotate_z_deg": 90.0,
+  "tile_width_x": 8.0,
+  "tile_width_y": 8.0,
+  "bounds": {
+    "x_min": -25.25,
+    "x_max": 25.25,
+    "y_min": -12.5,
+    "y_max": 12.5
+  },
+  "suggested_start": {
+    "x": -23.75,
+    "y": 0.0,
+    "z": 1.05
+  },
+  "suggested_goal_x": 23.75,
+  "tiles": [
+    {
+      "slot": 0,
+      "row": 0,
+      "col": 0,
+      "x": -21.25,
+      "y": -8.5,
+      "level": 0,
+      "file": "d_1.usda",
+      "prim_path": "/World/ground/tile_r0_c0",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 1,
+      "row": 0,
+      "col": 1,
+      "x": -12.75,
+      "y": -8.5,
+      "level": 1,
+      "file": "b_deep.usda",
+      "prim_path": "/World/ground/tile_r0_c1",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 2,
+      "row": 0,
+      "col": 2,
+      "x": -4.25,
+      "y": -8.5,
+      "level": 1,
+      "file": "b.usda",
+      "prim_path": "/World/ground/tile_r0_c2",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 3,
+      "row": 0,
+      "col": 3,
+      "x": 4.25,
+      "y": -8.5,
+      "level": 1,
+      "file": "c.usda",
+      "prim_path": "/World/ground/tile_r0_c3",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 4,
+      "row": 0,
+      "col": 4,
+      "x": 12.75,
+      "y": -8.5,
+      "level": 0,
+      "file": "d_3.usda",
+      "prim_path": "/World/ground/tile_r0_c4",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 5,
+      "row": 0,
+      "col": 5,
+      "x": 21.25,
+      "y": -8.5,
+      "level": 0,
+      "file": "d_2.usda",
+      "prim_path": "/World/ground/tile_r0_c5",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 6,
+      "row": 1,
+      "col": 0,
+      "x": -21.25,
+      "y": 0.0,
+      "level": 2,
+      "file": "a.usda",
+      "prim_path": "/World/ground/tile_r1_c0",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 7,
+      "row": 1,
+      "col": 1,
+      "x": -12.75,
+      "y": 0.0,
+      "level": 1,
+      "file": "b_deep.usda",
+      "prim_path": "/World/ground/tile_r1_c1",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 8,
+      "row": 1,
+      "col": 2,
+      "x": -4.25,
+      "y": 0.0,
+      "level": 1,
+      "file": "b.usda",
+      "prim_path": "/World/ground/tile_r1_c2",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 9,
+      "row": 1,
+      "col": 3,
+      "x": 4.25,
+      "y": 0.0,
+      "level": 2,
+      "file": "a_2.usda",
+      "prim_path": "/World/ground/tile_r1_c3",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 10,
+      "row": 1,
+      "col": 4,
+      "x": 12.75,
+      "y": 0.0,
+      "level": 0,
+      "file": "d_0.usda",
+      "prim_path": "/World/ground/tile_r1_c4",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 11,
+      "row": 1,
+      "col": 5,
+      "x": 21.25,
+      "y": 0.0,
+      "level": 1,
+      "file": "c.usda",
+      "prim_path": "/World/ground/tile_r1_c5",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 12,
+      "row": 2,
+      "col": 0,
+      "x": -21.25,
+      "y": 8.5,
+      "level": 2,
+      "file": "a.usda",
+      "prim_path": "/World/ground/tile_r2_c0",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 13,
+      "row": 2,
+      "col": 1,
+      "x": -12.75,
+      "y": 8.5,
+      "level": 2,
+      "file": "a_2.usda",
+      "prim_path": "/World/ground/tile_r2_c1",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 14,
+      "row": 2,
+      "col": 2,
+      "x": -4.25,
+      "y": 8.5,
+      "level": 0,
+      "file": "d_1.usda",
+      "prim_path": "/World/ground/tile_r2_c2",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 15,
+      "row": 2,
+      "col": 3,
+      "x": 4.25,
+      "y": 8.5,
+      "level": 0,
+      "file": "d_3.usda",
+      "prim_path": "/World/ground/tile_r2_c3",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 16,
+      "row": 2,
+      "col": 4,
+      "x": 12.75,
+      "y": 8.5,
+      "level": 2,
+      "file": "a.usda",
+      "prim_path": "/World/ground/tile_r2_c4",
+      "rotate_z_deg": 90.0
+    },
+    {
+      "slot": 17,
+      "row": 2,
+      "col": 5,
+      "x": 21.25,
+      "y": 8.5,
+      "level": 0,
+      "file": "d_2.usda",
+      "prim_path": "/World/ground/tile_r2_c5",
+      "rotate_z_deg": 90.0
+    }
+  ],
+  "preset": "crossing",
+  "level_weights": {
+    "0": 0.5,
+    "1": 0.35,
+    "2": 0.15
+  }
+}

@@ -1,0 +1,294 @@
+{
+  "source_dir": "../../../test_segment_filtered",
+  "output_dir": ".",
+  "segment_count": 9,
+  "levels": {
+    "0": [
+      "d_0.usda",
+      "d_1.usda",
+      "d_2.usda",
+      "d_3.usda"
+    ],
+    "1": [
+      "b.usda",
+      "b_deep.usda",
+      "c.usda"
+    ],
+    "2": [
+      "a.usda",
+      "a_2.usda"
+    ]
+  },
+  "segments": [
+    {
+      "source_file": "a.usd",
+      "output_file": "a.usda",
+      "level": 2,
+      "prim_path": "/World/ground",
+      "terrain_mesh_path": "/World/ground/terrain/mesh",
+      "source_segment_prim": "/Root/seg_00_id_00",
+      "source_bounds": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -120.0,
+        "y_max": -112.0,
+        "z_min": -10.0,
+        "z_max": 0.07500000298023224
+      },
+      "recenter_shift": {
+        "x": -0.0,
+        "y": 116.0,
+        "z": 0.0
+      },
+      "local_bounds_after_shift": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -4.0,
+        "y_max": 4.0,
+        "z_min": -10.0,
+        "z_max": 0.07500000298023224
+      },
+      "point_count": 5340
+    },
+    {
+      "source_file": "a_2.usd",
+      "output_file": "a_2.usda",
+      "level": 2,
+      "prim_path": "/World/ground",
+      "terrain_mesh_path": "/World/ground/terrain/mesh",
+      "source_segment_prim": "/Root/seg_25_id_25",
+      "source_bounds": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": 80.0,
+        "y_max": 88.0,
+        "z_min": -10.0,
+        "z_max": 0.054999999701976776
+      },
+      "recenter_shift": {
+        "x": -0.0,
+        "y": -84.0,
+        "z": 0.0
+      },
+      "local_bounds_after_shift": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -4.0,
+        "y_max": 4.0,
+        "z_min": -10.0,
+        "z_max": 0.054999999701976776
+      },
+      "point_count": 6565
+    },
+    {
+      "source_file": "b.usd",
+      "output_file": "b.usda",
+      "level": 1,
+      "prim_path": "/World/ground",
+      "terrain_mesh_path": "/World/ground/terrain/mesh",
+      "source_segment_prim": "/Root/seg_02_id_02",
+      "source_bounds": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -104.0,
+        "y_max": -96.0,
+        "z_min": -10.0,
+        "z_max": 0.0
+      },
+      "recenter_shift": {
+        "x": -0.0,
+        "y": 100.0,
+        "z": 0.0
+      },
+      "local_bounds_after_shift": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -4.0,
+        "y_max": 4.0,
+        "z_min": -10.0,
+        "z_max": 0.0
+      },
+      "point_count": 200
+    },
+    {
+      "source_file": "b_deep.usd",
+      "output_file": "b_deep.usda",
+      "level": 1,
+      "prim_path": "/World/ground",
+      "terrain_mesh_path": "/World/ground/terrain/mesh",
+      "source_segment_prim": "/Root/seg_26_id_26",
+      "source_bounds": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": 88.0,
+        "y_max": 96.0,
+        "z_min": -10.0,
+        "z_max": 0.0
+      },
+      "recenter_shift": {
+        "x": -0.0,
+        "y": -92.0,
+        "z": 0.0
+      },
+      "local_bounds_after_shift": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -4.0,
+        "y_max": 4.0,
+        "z_min": -10.0,
+        "z_max": 0.0
+      },
+      "point_count": 88
+    },
+    {
+      "source_file": "c.usd",
+      "output_file": "c.usda",
+      "level": 1,
+      "prim_path": "/World/ground",
+      "terrain_mesh_path": "/World/ground/terrain/mesh",
+      "source_segment_prim": "/Root/seg_11_id_11",
+      "source_bounds": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -32.0,
+        "y_max": -24.0,
+        "z_min": -1.0,
+        "z_max": 0.03500000014901161
+      },
+      "recenter_shift": {
+        "x": -0.0,
+        "y": 28.0,
+        "z": 0.0
+      },
+      "local_bounds_after_shift": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -4.0,
+        "y_max": 4.0,
+        "z_min": -1.0,
+        "z_max": 0.03500000014901161
+      },
+      "point_count": 6563
+    },
+    {
+      "source_file": "d_0.usd",
+      "output_file": "d_0.usda",
+      "level": 0,
+      "prim_path": "/World/ground",
+      "terrain_mesh_path": "/World/ground/terrain/mesh",
+      "source_segment_prim": "/Root/seg_18_id_18",
+      "source_bounds": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": 24.0,
+        "y_max": 32.0,
+        "z_min": -10.0,
+        "z_max": 0.14000000059604645
+      },
+      "recenter_shift": {
+        "x": -0.0,
+        "y": -28.0,
+        "z": 0.0
+      },
+      "local_bounds_after_shift": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -4.0,
+        "y_max": 4.0,
+        "z_min": -10.0,
+        "z_max": 0.14000000059604645
+      },
+      "point_count": 6609
+    },
+    {
+      "source_file": "d_1.usd",
+      "output_file": "d_1.usda",
+      "level": 0,
+      "prim_path": "/World/ground",
+      "terrain_mesh_path": "/World/ground/terrain/mesh",
+      "source_segment_prim": "/Root/seg_19_id_19",
+      "source_bounds": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": 32.0,
+        "y_max": 40.0,
+        "z_min": 0.0,
+        "z_max": 0.14000000059604645
+      },
+      "recenter_shift": {
+        "x": -0.0,
+        "y": -36.0,
+        "z": 0.0
+      },
+      "local_bounds_after_shift": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -4.0,
+        "y_max": 4.0,
+        "z_min": 0.0,
+        "z_max": 0.14000000059604645
+      },
+      "point_count": 6561
+    },
+    {
+      "source_file": "d_2.usd",
+      "output_file": "d_2.usda",
+      "level": 0,
+      "prim_path": "/World/ground",
+      "terrain_mesh_path": "/World/ground/terrain/mesh",
+      "source_segment_prim": "/Root/seg_20_id_20",
+      "source_bounds": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": 40.0,
+        "y_max": 48.0,
+        "z_min": 0.0,
+        "z_max": 0.41999998688697815
+      },
+      "recenter_shift": {
+        "x": -0.0,
+        "y": -44.0,
+        "z": 0.0
+      },
+      "local_bounds_after_shift": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -4.0,
+        "y_max": 4.0,
+        "z_min": 0.0,
+        "z_max": 0.41999998688697815
+      },
+      "point_count": 6561
+    },
+    {
+      "source_file": "d_3.usd",
+      "output_file": "d_3.usda",
+      "level": 0,
+      "prim_path": "/World/ground",
+      "terrain_mesh_path": "/World/ground/terrain/mesh",
+      "source_segment_prim": "/Root/seg_21_id_21",
+      "source_bounds": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": 48.0,
+        "y_max": 56.0,
+        "z_min": -1.0,
+        "z_max": 0.625
+      },
+      "recenter_shift": {
+        "x": -0.0,
+        "y": -52.0,
+        "z": 0.0
+      },
+      "local_bounds_after_shift": {
+        "x_min": -4.0,
+        "x_max": 4.0,
+        "y_min": -4.0,
+        "y_max": 4.0,
+        "z_min": -1.0,
+        "z_max": 0.625
+      },
+      "point_count": 6565
+    }
+  ]
+}

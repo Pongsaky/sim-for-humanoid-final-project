@@ -1,0 +1,253 @@
+{
+  "source_usd": "test_map.usd",
+  "segment_count": 13,
+  "segments": [
+    {
+      "segment_id": 2,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_00_id_02.usda",
+      "y_min": -87.900002,
+      "y_max": -80.099998,
+      "center_y_removed": -84.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.9000015258789062,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.9000015258789062,
+        0.14000000059604645
+      ]
+    },
+    {
+      "segment_id": 5,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_01_id_05.usda",
+      "y_min": -71.900002,
+      "y_max": -64.099998,
+      "center_y_removed": -68.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.9000015258789062,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.9000015258789062,
+        0.48500001430511475
+      ]
+    },
+    {
+      "segment_id": 6,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_02_id_06.usda",
+      "y_min": -55.900002,
+      "y_max": -48.099998,
+      "center_y_removed": -52.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.9000015258789062,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.9000015258789062,
+        0.625
+      ]
+    },
+    {
+      "segment_id": 7,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_03_id_07.usda",
+      "y_min": -39.900002,
+      "y_max": -32.099998,
+      "center_y_removed": -36.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.9000015258789062,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.9000015258789062,
+        0.14000000059604645
+      ]
+    },
+    {
+      "segment_id": 11,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_04_id_11.usda",
+      "y_min": -15.9,
+      "y_max": -8.1,
+      "center_y_removed": -12.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.8999996185302734,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.8999996185302734,
+        0.41999998688697815
+      ]
+    },
+    {
+      "segment_id": 12,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_05_id_12.usda",
+      "y_min": 0.1,
+      "y_max": 7.9,
+      "center_y_removed": 4.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.9000000953674316,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.9000000953674316,
+        0.07000000029802322
+      ]
+    },
+    {
+      "segment_id": 15,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_06_id_15.usda",
+      "y_min": 24.1,
+      "y_max": 31.9,
+      "center_y_removed": 28.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.8999996185302734,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.8999996185302734,
+        0.14000000059604645
+      ]
+    },
+    {
+      "segment_id": 16,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_07_id_16.usda",
+      "y_min": 32.099998,
+      "y_max": 39.900002,
+      "center_y_removed": 36.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.9000015258789062,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.9000015258789062,
+        0.14000000059604645
+      ]
+    },
+    {
+      "segment_id": 17,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_08_id_17.usda",
+      "y_min": 40.099998,
+      "y_max": 47.900002,
+      "center_y_removed": 44.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.9000015258789062,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.9000015258789062,
+        0.41999998688697815
+      ]
+    },
+    {
+      "segment_id": 18,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_09_id_18.usda",
+      "y_min": 48.099998,
+      "y_max": 55.900002,
+      "center_y_removed": 52.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.9000015258789062,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.9000015258789062,
+        0.625
+      ]
+    },
+    {
+      "segment_id": 19,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_10_id_19.usda",
+      "y_min": 72.099998,
+      "y_max": 79.900002,
+      "center_y_removed": 76.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.9000015258789062,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.9000015258789062,
+        0.14000000059604645
+      ]
+    },
+    {
+      "segment_id": 22,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_11_id_22.usda",
+      "y_min": 96.099998,
+      "y_max": 103.900002,
+      "center_y_removed": 100.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.9000015258789062,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.9000015258789062,
+        0.6949999928474426
+      ]
+    },
+    {
+      "segment_id": 23,
+      "output": "myproject/source/myproject/myproject/assets/environments/test_map_segments/seg_12_id_23.usda",
+      "y_min": 104.099998,
+      "y_max": 111.900002,
+      "center_y_removed": 108.0,
+      "point_count": 6399,
+      "triangle_count": 12480,
+      "bounds_min": [
+        -4.0,
+        -3.9000015258789062,
+        0.0
+      ],
+      "bounds_max": [
+        4.0,
+        3.9000015258789062,
+        0.41999998688697815
+      ]
+    }
+  ]
+}
