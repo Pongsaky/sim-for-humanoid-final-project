@@ -13,9 +13,13 @@ if TYPE_CHECKING:
 def goal_reached(
     env: ManagerBasedRLEnv,
     goal_x: float,
+    start_x: float | None = None,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> "torch.Tensor":
     """Terminate episode when robot base crosses the goal line in +x for each env."""
     asset = env.scene[asset_cfg.name]
-    env_x = env.scene.env_origins[:, 0]
-    return asset.data.root_pos_w[:, 0] >= (env_x + goal_x)
+    if start_x is None:
+        goal_line_x = env.scene.env_origins[:, 0] + goal_x
+    else:
+        goal_line_x = asset.data.root_pos_w[:, 0].new_full((env.num_envs,), float(start_x + goal_x))
+    return asset.data.root_pos_w[:, 0] >= goal_line_x

@@ -8,6 +8,7 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.terrains.terrain_generator_cfg import TerrainGeneratorCfg
 from isaaclab.utils import configclass
@@ -44,6 +45,14 @@ MAP_START_POS = (-6.5, 0, 1.05 + SPAWN_Z_CLEARANCE)
 MAP_START_ROT = (1.0, 0.0, 0.0, 0.0)
 MAP_START_POS_JITTER_XY = (0.3, 0.5)
 CURRICULUM_ARENA_START_POS_JITTER_XY = (0.4, 0.4)
+BASELINE_GOAL_PROGRESS_WEIGHT = 4.0
+BASELINE_FEET_AIR_TIME_WEIGHT = 4.0
+BASELINE_FEET_AIR_TIME_MIN = 0.04
+BASELINE_FEET_AIR_TIME_TARGET = 0.14
+BASELINE_FEET_STANCE_TIME_MIN = 0.04
+BASELINE_STEP_FORWARD_SPEED_MIN = 0.05
+BASELINE_TRACK_LIN_VEL_WEIGHT = 0.25
+BASELINE_UPRIGHT_SURVIVAL_WEIGHT = 0.5
 
 
 def _tune_shared_arena_physx_buffers_for_training_headless(env_cfg) -> None:
@@ -214,16 +223,98 @@ class FinalProjectRewards(H1Rewards):
 
 @configclass
 class FinalProjectBaselineRewards(H1Rewards):
-    """Minimal goal-conditioned baseline on the real map without curriculum."""
+    """First-passage baseline aligned with minimizing time-to-goal."""
 
-    forward_velocity = RewTerm(func=custom_mdp.forward_velocity_toward_goal, weight=2.0, params={"goal_x": GOAL_X})
-    goal_progress = RewTerm(func=custom_mdp.goal_distance_progress, weight=1.0, params={"goal_x": GOAL_X})
+    termination_penalty = None
+    track_lin_vel_xy_exp = None
+    track_ang_vel_z_exp = None
+    dof_pos_limits = None
+    joint_deviation_hip = None
+    joint_deviation_arms = None
+    joint_deviation_torso = None
+    ang_vel_xy_l2 = None
+    lin_vel_z_l2 = None
+
+    time_cost = RewTerm(func=custom_mdp.time_penalty, weight=-1.0)
+    goal_progress = RewTerm(
+        func=custom_mdp.gated_goal_progress_delta,
+        weight=BASELINE_GOAL_PROGRESS_WEIGHT,
+        params={
+            "goal_x": GOAL_X,
+            "start_x": MAP_START_POS[0],
+            "normalize_by_goal": False,
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.30,
+            "safe_upright": 0.80,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    track_lin_vel_xy_exp = RewTerm(
+        func=custom_mdp.gated_track_lin_vel_xy_command,
+        weight=BASELINE_TRACK_LIN_VEL_WEIGHT,
+        params={
+            "command_name": "base_velocity",
+            "std": 0.5,
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.25,
+            "safe_upright": 0.75,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    forward_speed = None
     goal_reached_bonus = RewTerm(
         func=custom_mdp.goal_reached_bonus,
-        weight=100.0,
-        params={"goal_x": GOAL_X, "bonus": 1.0},
+        weight=25.0,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "bonus": 1.0},
     )
-    low_height_penalty = RewTerm(func=custom_mdp.base_height_penalty, weight=-2.0, params={"min_height": 0.55})
+    failure_penalty = RewTerm(func=mdp.is_terminated, weight=-10.0)
+    upright_survival = RewTerm(
+        func=custom_mdp.upright_survival_reward,
+        weight=BASELINE_UPRIGHT_SURVIVAL_WEIGHT,
+        params={
+            "min_height": 0.40,
+            "safe_height": 0.68,
+            "min_upright": 0.20,
+            "safe_upright": 0.70,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    low_height_penalty = RewTerm(func=custom_mdp.base_height_penalty, weight=-0.2, params={"min_height": 0.50})
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=0.0)
+    dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=0.0)
+    dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=0.0)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.001)
+    feet_air_time = RewTerm(
+        func=custom_mdp.gated_single_swing_step_reward,
+        weight=BASELINE_FEET_AIR_TIME_WEIGHT,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "min_air_time": BASELINE_FEET_AIR_TIME_MIN,
+            "target_air_time": BASELINE_FEET_AIR_TIME_TARGET,
+            "min_stance_time": BASELINE_FEET_STANCE_TIME_MIN,
+            "min_forward_speed": BASELINE_STEP_FORWARD_SPEED_MIN,
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.18,
+            "safe_upright": 0.68,
+            "contact_force_threshold": 1.0,
+            "torso_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    feet_slide = RewTerm(
+        func=mdp.feet_slide,
+        weight=-0.05,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_link"),
+        },
+    )
 
 
 @configclass
@@ -367,24 +458,140 @@ class FinalProjectUnitreeH1MapEnvCfg_PLAY(FinalProjectUnitreeH1MapEnvCfg):
 
 @configclass
 class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
-    """Baseline: stock H1 flat locomotion setup, trained from scratch on the final map."""
+    """Baseline: first-passage training on the final map from scratch."""
 
     rewards: FinalProjectBaselineRewards = FinalProjectBaselineRewards()
+
+    def _apply_baseline_reward_overrides(self):
+        """Re-apply baseline reward values after inherited H1 post-init mutations."""
+        self.rewards.feet_air_time.func = custom_mdp.gated_single_swing_step_reward
+        self.rewards.feet_air_time.weight = BASELINE_FEET_AIR_TIME_WEIGHT
+        self.rewards.feet_air_time.params = {
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "min_air_time": BASELINE_FEET_AIR_TIME_MIN,
+            "target_air_time": BASELINE_FEET_AIR_TIME_TARGET,
+            "min_stance_time": BASELINE_FEET_STANCE_TIME_MIN,
+            "min_forward_speed": BASELINE_STEP_FORWARD_SPEED_MIN,
+            "min_height": 0.45,
+            "safe_height": 0.72,
+            "min_upright": 0.25,
+            "safe_upright": 0.75,
+            "contact_force_threshold": 1.0,
+            "torso_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        }
+        self.rewards.goal_progress.weight = BASELINE_GOAL_PROGRESS_WEIGHT
+        self.rewards.goal_progress.params["normalize_by_goal"] = False
+        self.rewards.track_lin_vel_xy_exp.weight = BASELINE_TRACK_LIN_VEL_WEIGHT
+        self.rewards.goal_reached_bonus.weight = 40.0
+        self.rewards.upright_survival.weight = 0.75
+        self.rewards.upright_survival.params = {
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.25,
+            "safe_upright": 0.75,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        }
+        self.rewards.forward_speed = None
+        self.rewards.flat_orientation_l2.weight = 0.0
+        self.rewards.dof_torques_l2.weight = 0.0
+        self.rewards.dof_acc_l2.weight = 0.0
+        self.rewards.action_rate_l2.weight = -0.001
+
+    def _validate_baseline_reward_overrides(self):
+        """Fail fast if inherited configs silently override the intended baseline reward setup."""
+        if self.rewards.feet_air_time.func is not custom_mdp.gated_single_swing_step_reward:
+            raise ValueError("Baseline feet_air_time reward func was overridden unexpectedly.")
+        if self.rewards.feet_air_time.weight != BASELINE_FEET_AIR_TIME_WEIGHT:
+            raise ValueError(
+                f"Baseline feet_air_time weight={self.rewards.feet_air_time.weight} "
+                f"expected {BASELINE_FEET_AIR_TIME_WEIGHT}."
+            )
+        if self.rewards.feet_air_time.params.get("min_air_time") != BASELINE_FEET_AIR_TIME_MIN:
+            raise ValueError(
+                f"Baseline feet_air_time min_air_time={self.rewards.feet_air_time.params.get('min_air_time')} "
+                f"expected {BASELINE_FEET_AIR_TIME_MIN}."
+            )
+        if self.rewards.goal_progress.weight != BASELINE_GOAL_PROGRESS_WEIGHT:
+            raise ValueError(
+                f"Baseline goal_progress weight={self.rewards.goal_progress.weight} "
+                f"expected {BASELINE_GOAL_PROGRESS_WEIGHT}."
+            )
+        if self.rewards.goal_progress.params.get("normalize_by_goal") is not False:
+            raise ValueError("Baseline goal_progress must use raw per-step x-delta.")
+        if self.rewards.goal_reached_bonus.weight != 40.0:
+            raise ValueError(
+                f"Baseline goal_reached_bonus weight={self.rewards.goal_reached_bonus.weight} expected 40.0."
+            )
+        if self.rewards.upright_survival.weight != 0.75:
+            raise ValueError(
+                f"Baseline upright_survival weight={self.rewards.upright_survival.weight} expected 0.75."
+            )
+        if self.rewards.upright_survival.params.get("min_height") != 0.42:
+            raise ValueError(
+                f"Baseline upright_survival min_height={self.rewards.upright_survival.params.get('min_height')} "
+                "expected 0.42."
+            )
+        if self.rewards.forward_speed is not None:
+            raise ValueError("Baseline forward_speed reward must stay disabled.")
 
     def __post_init__(self):
         super().__post_init__()
 
+        self._apply_baseline_reward_overrides()
+        self._validate_baseline_reward_overrides()
+
         self.scene.robot = UNITREE_H1_MINIMAL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.height_scanner = RayCasterCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/torso_link",
+            offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+            ray_alignment="yaw",
+            pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+            debug_vis=False,
+            mesh_prim_paths=["/World/ground"],
+        )
         self.scene.final_map = None
         self.scene.num_envs = 64
         self.scene.env_spacing = MAP_ENV_SPACING
+        self.actions.joint_pos.scale = 0.4
         self.commands.base_velocity.heading_command = False
         self.commands.base_velocity.rel_heading_envs = 0.0
-        self.commands.base_velocity.ranges.lin_vel_x = (1.0, 1.0)
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        # Keep each episode on one forward command so completion pressure lines
+        # up with the first-passage objective instead of switching targets mid-run.
+        self.commands.base_velocity.resampling_time_range = (20.0, 20.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.35, 0.6)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
         self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
         self.commands.base_velocity.ranges.heading = None
-        self.terminations.goal_reached = DoneTerm(func=custom_mdp.goal_reached, params={"goal_x": GOAL_X})
+        self.observations.policy.height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            clip=(-1.0, 1.0),
+        )
+        self.observations.policy.velocity_commands = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "base_velocity"},
+        )
+        self.observations.policy.goal_distance = ObsTerm(
+            func=custom_mdp.goal_distance_x,
+            params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "normalize": True},
+        )
+        self.events.reset_robot_joints.params["position_range"] = (0.95, 1.05)
+        self.terminations.goal_reached = DoneTerm(
+            func=custom_mdp.goal_reached,
+            params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0]},
+        )
+        if self.commands.base_velocity.resampling_time_range != (20.0, 20.0):
+            raise ValueError(
+                "Baseline base_velocity resampling_time_range was overridden unexpectedly. "
+                f"Got {self.commands.base_velocity.resampling_time_range}."
+            )
+        if self.commands.base_velocity.ranges.lin_vel_x != (0.35, 0.6):
+            raise ValueError(
+                f"Baseline lin_vel_x range={self.commands.base_velocity.ranges.lin_vel_x} expected (0.35, 0.6)."
+            )
         self.finalize_after_overrides()
 
     def finalize_after_overrides(self):
@@ -441,11 +648,13 @@ class FinalProjectUnitreeH1StabilityArenaEnvCfg(FinalProjectUnitreeH1EnvCfg):
 
     def finalize_after_overrides(self):
         layout = _load_arena_layout(CURRICULUM_ARENA_STABILITY_LAYOUT_PATH)
-        start_pos = _apply_spawn_z_clearance((
-            float(layout["suggested_start"]["x"]),
-            float(layout["suggested_start"]["y"]),
-            float(layout["suggested_start"]["z"]),
-        ))
+        start_pos = _apply_spawn_z_clearance(
+            (
+                float(layout["suggested_start"]["x"]),
+                float(layout["suggested_start"]["y"]),
+                float(layout["suggested_start"]["z"]),
+            )
+        )
         goal_x = float(layout["suggested_goal_x"])
         _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
         _tune_shared_arena_physx_buffers_for_training(self)
@@ -476,11 +685,13 @@ class FinalProjectUnitreeH1StabilityArenaEnvCfg_PLAY(FinalProjectUnitreeH1Stabil
 
     def finalize_after_overrides(self):
         layout = _load_arena_layout(CURRICULUM_ARENA_STABILITY_LAYOUT_PATH)
-        start_pos = _apply_spawn_z_clearance((
-            float(layout["suggested_start"]["x"]),
-            float(layout["suggested_start"]["y"]),
-            float(layout["suggested_start"]["z"]),
-        ))
+        start_pos = _apply_spawn_z_clearance(
+            (
+                float(layout["suggested_start"]["x"]),
+                float(layout["suggested_start"]["y"]),
+                float(layout["suggested_start"]["z"]),
+            )
+        )
         goal_x = float(layout["suggested_goal_x"])
         _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
         _tune_shared_arena_physx_buffers_for_play(self)
@@ -516,11 +727,13 @@ class FinalProjectUnitreeH1CrossingArenaEnvCfg(FinalProjectUnitreeH1EnvCfg):
 
     def finalize_after_overrides(self):
         layout = _load_arena_layout(CURRICULUM_ARENA_CROSSING_LAYOUT_PATH)
-        start_pos = _apply_spawn_z_clearance((
-            float(layout["suggested_start"]["x"]),
-            float(layout["suggested_start"]["y"]),
-            float(layout["suggested_start"]["z"]),
-        ))
+        start_pos = _apply_spawn_z_clearance(
+            (
+                float(layout["suggested_start"]["x"]),
+                float(layout["suggested_start"]["y"]),
+                float(layout["suggested_start"]["z"]),
+            )
+        )
         goal_x = float(layout["suggested_goal_x"])
         _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
         _tune_shared_arena_physx_buffers_for_training(self)
@@ -551,11 +764,13 @@ class FinalProjectUnitreeH1CrossingArenaEnvCfg_PLAY(FinalProjectUnitreeH1Crossin
 
     def finalize_after_overrides(self):
         layout = _load_arena_layout(CURRICULUM_ARENA_CROSSING_LAYOUT_PATH)
-        start_pos = _apply_spawn_z_clearance((
-            float(layout["suggested_start"]["x"]),
-            float(layout["suggested_start"]["y"]),
-            float(layout["suggested_start"]["z"]),
-        ))
+        start_pos = _apply_spawn_z_clearance(
+            (
+                float(layout["suggested_start"]["x"]),
+                float(layout["suggested_start"]["y"]),
+                float(layout["suggested_start"]["z"]),
+            )
+        )
         goal_x = float(layout["suggested_goal_x"])
         _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
         _tune_shared_arena_physx_buffers_for_play(self)
