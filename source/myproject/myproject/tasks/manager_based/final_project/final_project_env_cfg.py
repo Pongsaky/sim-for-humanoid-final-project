@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import isaaclab.sim as sim_utils
@@ -53,6 +54,51 @@ BASELINE_FEET_STANCE_TIME_MIN = 0.04
 BASELINE_STEP_FORWARD_SPEED_MIN = 0.05
 BASELINE_TRACK_LIN_VEL_WEIGHT = 0.25
 BASELINE_UPRIGHT_SURVIVAL_WEIGHT = 0.5
+CURRICULUM_PROXY_GOAL_X = 2.75
+CURRICULUM_GOAL_PROGRESS_WEIGHT = 2.5
+CURRICULUM_FEET_AIR_TIME_WEIGHT = 18.0
+CURRICULUM_TRACK_LIN_VEL_WEIGHT = 0.015
+CURRICULUM_UPRIGHT_SURVIVAL_WEIGHT = 1.5
+CURRICULUM_STAND_UP_HEIGHT_WEIGHT = 4.0
+ROUGH_GOAL_BASELINE_TRACK_ANG_VEL_WEIGHT = 0.25
+ROUGH_GOAL_BASELINE_TERMINATION_PENALTY = -25.0
+ROUGH_GOAL_BASELINE_GOAL_PROGRESS_WEIGHT = 2.0
+ROUGH_GOAL_BASELINE_GOAL_REACHED_BONUS_WEIGHT = 50.0
+ROUGH_GOAL_BASELINE_LIN_VEL_X_RANGE = (0.25, 0.5)
+MINIMAL_REWARD_GOAL_PROGRESS_WEIGHT = 2.0
+MINIMAL_REWARD_GOAL_REACHED_BONUS_WEIGHT = 50.0
+MINIMAL_REWARD_LIN_VEL_X_RANGE = (0.25, 0.5)
+SPEEDRUN_LIN_VEL_X_RANGE = (1.0, 1.5)
+SPEEDRUN_TERMINATION_PENALTY = -5.0
+FASTWALK_LIN_VEL_X_RANGE = (1.0, 1.5)
+AUTOPILOT_PROFILE_ENV_VAR = "FINAL_PROJECT_AUTOPILOT_PROFILE"
+STABILITY_WARMUP_PROXY_GOAL_X = 4.0
+
+
+def _load_autopilot_profile() -> dict:
+    """Load bounded autopilot tuning overrides from a JSON file when present."""
+
+    profile_path = os.environ.get(AUTOPILOT_PROFILE_ENV_VAR)
+    if not profile_path:
+        return {}
+    try:
+        with open(profile_path, "r", encoding="utf-8") as f:
+            profile = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return profile if isinstance(profile, dict) else {}
+
+
+def _get_autopilot_override(section: str) -> dict:
+    overrides = _load_autopilot_profile().get("sections", {})
+    selected = overrides.get(section, {})
+    return selected if isinstance(selected, dict) else {}
+
+
+def _tuple2(value, default):
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        return (float(value[0]), float(value[1]))
+    return default
 
 
 def _tune_shared_arena_physx_buffers_for_training_headless(env_cfg) -> None:
@@ -271,6 +317,39 @@ class FinalProjectBaselineRewards(H1Rewards):
         weight=25.0,
         params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "bonus": 1.0},
     )
+    stand_up_height = RewTerm(
+        func=custom_mdp.stand_up_height_reward,
+        weight=0.0,
+        params={
+            "min_height": 0.46,
+            "target_height": 0.70,
+            "min_upright": 0.3,
+            "safe_upright": 0.75,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    stance_leg_extension = RewTerm(
+        func=custom_mdp.stance_leg_extension_reward,
+        weight=0.0,
+        params={
+            "target_hip_pitch": -0.28,
+            "target_knee": 0.79,
+            "target_ankle": -0.52,
+            "posture_sigma": 0.20,
+            "stance_contact_time": 0.03,
+            "min_height": 0.44,
+            "safe_height": 0.70,
+            "min_upright": 0.25,
+            "safe_upright": 0.75,
+            "contact_force_threshold": 1.0,
+            "hip_cfg": SceneEntityCfg("robot", joint_names=".*_hip_pitch"),
+            "knee_cfg": SceneEntityCfg("robot", joint_names=".*_knee"),
+            "ankle_cfg": SceneEntityCfg("robot", joint_names=".*_ankle"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "torso_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
     failure_penalty = RewTerm(func=mdp.is_terminated, weight=-10.0)
     upright_survival = RewTerm(
         func=custom_mdp.upright_survival_reward,
@@ -318,80 +397,566 @@ class FinalProjectBaselineRewards(H1Rewards):
 
 
 @configclass
-class FinalProjectCurriculum:
-    """Difficulty progression for command speed and disturbances."""
+class FinalProjectCurriculumRewards(FinalProjectBaselineRewards):
+    """Stepping-first curriculum rewards on the final-map geometry."""
 
-    terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
-    command_speed = CurrTerm(
-        func=custom_mdp.increase_command_range,
-        # Old aggressive setting for reference:
-        # params={"interval_steps": 5000, "max_lin_vel_x": 2.0, "step_size": 0.15},
-        params={"interval_steps": 10000, "max_lin_vel_x": 1.2, "step_size": 0.1},
+    goal_progress = RewTerm(
+        func=custom_mdp.gated_goal_progress_delta,
+        weight=CURRICULUM_GOAL_PROGRESS_WEIGHT,
+        params={
+            "goal_x": CURRICULUM_PROXY_GOAL_X,
+            "start_x": MAP_START_POS[0],
+            "normalize_by_goal": False,
+            "min_height": 0.38,
+            "safe_height": 0.66,
+            "min_upright": 0.22,
+            "safe_upright": 0.72,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
     )
-    push_strength = CurrTerm(
-        func=custom_mdp.increase_push_disturbance,
-        params={"interval_steps": 8000, "max_push_vel": 0.8, "step_size": 0.05},
+    track_lin_vel_xy_exp = RewTerm(
+        func=custom_mdp.gated_track_lin_vel_xy_command,
+        weight=CURRICULUM_TRACK_LIN_VEL_WEIGHT,
+        params={
+            "command_name": "base_velocity",
+            "std": 0.35,
+            "min_height": 0.38,
+            "safe_height": 0.66,
+            "min_upright": 0.18,
+            "safe_upright": 0.68,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    goal_reached_bonus = RewTerm(
+        func=custom_mdp.goal_reached_bonus,
+        weight=20.0,
+        params={"goal_x": CURRICULUM_PROXY_GOAL_X, "start_x": MAP_START_POS[0], "bonus": 1.0},
+    )
+    stand_up_height = RewTerm(
+        func=custom_mdp.stand_up_height_reward,
+        weight=CURRICULUM_STAND_UP_HEIGHT_WEIGHT,
+        params={
+            "min_height": 0.42,
+            "target_height": 0.68,
+            "min_upright": 0.22,
+            "safe_upright": 0.68,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    stance_leg_extension = RewTerm(
+        func=custom_mdp.stance_leg_extension_reward,
+        weight=3.0,
+        params={
+            "target_hip_pitch": -0.28,
+            "target_knee": 0.79,
+            "target_ankle": -0.52,
+            "posture_sigma": 0.20,
+            "stance_contact_time": 0.025,
+            "min_height": 0.40,
+            "safe_height": 0.68,
+            "min_upright": 0.18,
+            "safe_upright": 0.66,
+            "contact_force_threshold": 1.0,
+            "hip_cfg": SceneEntityCfg("robot", joint_names=".*_hip_pitch"),
+            "knee_cfg": SceneEntityCfg("robot", joint_names=".*_knee"),
+            "ankle_cfg": SceneEntityCfg("robot", joint_names=".*_ankle"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "torso_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    upright_survival = RewTerm(
+        func=custom_mdp.upright_survival_reward,
+        weight=CURRICULUM_UPRIGHT_SURVIVAL_WEIGHT,
+        params={
+            "min_height": 0.38,
+            "safe_height": 0.64,
+            "min_upright": 0.18,
+            "safe_upright": 0.66,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    low_height_penalty = RewTerm(func=custom_mdp.base_height_penalty, weight=-0.35, params={"min_height": 0.46})
+    feet_air_time = RewTerm(
+        func=custom_mdp.gated_early_step_reward,
+        weight=CURRICULUM_FEET_AIR_TIME_WEIGHT,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "min_air_time": 0.002,
+            "target_air_time": 0.024,
+            "min_stance_time": 0.004,
+            "min_forward_speed": 0.001,
+            "min_height": 0.40,
+            "safe_height": 0.68,
+            "min_upright": 0.16,
+            "safe_upright": 0.66,
+            "contact_force_threshold": 1.0,
+            "torso_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
     )
 
 
 @configclass
-class FinalProjectUnitreeH1EnvCfg(H1RoughEnvCfg):
-    """Stage A: curriculum training on procedural terrains."""
+class FinalProjectRoughGoalBaselineRewards(H1Rewards):
+    """Stock H1 locomotion rewards plus goal terms for final-map traversal."""
 
-    rewards: FinalProjectRewards = FinalProjectRewards()
+    termination_penalty = RewTerm(func=mdp.is_terminated, weight=ROUGH_GOAL_BASELINE_TERMINATION_PENALTY)
+    track_ang_vel_z_exp = RewTerm(
+        func=mdp.track_ang_vel_z_world_exp,
+        weight=ROUGH_GOAL_BASELINE_TRACK_ANG_VEL_WEIGHT,
+        params={"command_name": "base_velocity", "std": 0.5},
+    )
+    time_cost = RewTerm(func=custom_mdp.time_penalty, weight=-2.0)
+    goal_progress = RewTerm(
+        func=custom_mdp.gated_goal_progress_delta,
+        weight=3.0,
+        params={
+            "goal_x": GOAL_X,
+            "start_x": MAP_START_POS[0],
+            "normalize_by_goal": False,
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.30,
+            "safe_upright": 0.80,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    goal_reached_bonus = RewTerm(
+        func=custom_mdp.goal_reached_bonus,
+        weight=200.0,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "bonus": 1.0},
+    )
+
+
+@configclass
+class FinalProjectSpeedRunRewards(H1Rewards):
+    """Rewards for unlimited-retry fastest-total-time goal reaching.
+
+    Fall-forward friendly: goal_progress is ungated so any forward displacement earns
+    reward regardless of posture. Time-remaining bonus directly rewards faster arrivals.
+    """
+
+    termination_penalty = RewTerm(func=mdp.is_terminated, weight=SPEEDRUN_TERMINATION_PENALTY)
+    track_ang_vel_z_exp = RewTerm(
+        func=mdp.track_ang_vel_z_world_exp,
+        weight=0.1,
+        params={"command_name": "base_velocity", "std": 0.5},
+    )
+    time_cost = RewTerm(func=custom_mdp.time_penalty, weight=-2.0)
+    goal_progress = RewTerm(
+        func=custom_mdp.goal_progress_delta,
+        weight=5.0,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "normalize_by_goal": False},
+    )
+    goal_reached_bonus = RewTerm(
+        func=custom_mdp.time_remaining_goal_bonus,
+        weight=1.0,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "base_bonus": 500.0},
+    )
+    forward_speed = RewTerm(
+        func=custom_mdp.forward_velocity_toward_goal,
+        weight=0.3,
+        params={"goal_x": GOAL_X},
+    )
+
+
+@configclass
+class FinalProjectFastWalkRewards(H1Rewards):
+    """Rewards for fastest upright goal reaching.
+
+    Blocks fall-forward via speed-gated goal_progress: only earns when upright AND moving
+    above min_forward_speed. Time-remaining bonus rewards faster arrivals.
+    """
+
+    termination_penalty = RewTerm(func=mdp.is_terminated, weight=-25.0)
+    track_ang_vel_z_exp = RewTerm(
+        func=mdp.track_ang_vel_z_world_exp,
+        weight=0.25,
+        params={"command_name": "base_velocity", "std": 0.5},
+    )
+    time_cost = RewTerm(func=custom_mdp.time_penalty, weight=-2.0)
+    goal_progress = RewTerm(
+        func=custom_mdp.speed_gated_goal_progress_delta,
+        weight=5.0,
+        params={
+            "goal_x": GOAL_X,
+            "start_x": MAP_START_POS[0],
+            "normalize_by_goal": False,
+            "min_forward_speed": 0.4,
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.30,
+            "safe_upright": 0.80,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    goal_reached_bonus = RewTerm(
+        func=custom_mdp.time_remaining_goal_bonus,
+        weight=1.0,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "base_bonus": 500.0},
+    )
+
+
+@configclass
+class FinalProjectMinimalRewardRewards(H1Rewards):
+    """Diagnostic final-map reward stack with only one stock tracking term plus goal terms."""
+
+    track_ang_vel_z_exp = None
+    feet_air_time = None
+    feet_slide = None
+    dof_pos_limits = None
+    joint_deviation_hip = None
+    joint_deviation_arms = None
+    joint_deviation_torso = None
+
+    goal_progress = RewTerm(
+        func=custom_mdp.gated_goal_progress_delta,
+        weight=MINIMAL_REWARD_GOAL_PROGRESS_WEIGHT,
+        params={
+            "goal_x": GOAL_X,
+            "start_x": MAP_START_POS[0],
+            "normalize_by_goal": False,
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.30,
+            "safe_upright": 0.80,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    goal_reached_bonus = RewTerm(
+        func=custom_mdp.goal_reached_bonus,
+        weight=MINIMAL_REWARD_GOAL_REACHED_BONUS_WEIGHT,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "bonus": 1.0},
+    )
+
+
+@configclass
+class FinalProjectCurriculum:
+    """Map-aware curriculum uses explicit phase overrides instead of inherited terrain speed ramps."""
+
+    terrain_levels = None
+    command_speed = None
+    push_strength = None
+
+
+@configclass
+class FinalProjectUnitreeH1EnvCfg(H1FlatEnvCfg):
+    """Stage A: stepping-first curriculum on the shared final-map geometry."""
+
+    rewards: FinalProjectCurriculumRewards = FinalProjectCurriculumRewards()
     curriculum: FinalProjectCurriculum = FinalProjectCurriculum()
+
+    def _apply_curriculum_reward_overrides(self):
+        self.rewards.feet_air_time.func = custom_mdp.gated_early_step_reward
+        self.rewards.feet_air_time.weight = CURRICULUM_FEET_AIR_TIME_WEIGHT
+        self.rewards.feet_air_time.params = {
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "min_air_time": 0.002,
+            "target_air_time": 0.024,
+            "min_stance_time": 0.004,
+            "min_forward_speed": 0.001,
+            "min_height": 0.40,
+            "safe_height": 0.68,
+            "min_upright": 0.16,
+            "safe_upright": 0.66,
+            "contact_force_threshold": 1.0,
+            "torso_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        }
+        self.rewards.goal_progress.weight = CURRICULUM_GOAL_PROGRESS_WEIGHT
+        self.rewards.goal_progress.params = {
+            "goal_x": CURRICULUM_PROXY_GOAL_X,
+            "start_x": MAP_START_POS[0],
+            "normalize_by_goal": False,
+            "min_height": 0.38,
+            "safe_height": 0.66,
+            "min_upright": 0.22,
+            "safe_upright": 0.72,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        }
+        self.rewards.track_lin_vel_xy_exp.weight = CURRICULUM_TRACK_LIN_VEL_WEIGHT
+        self.rewards.track_lin_vel_xy_exp.params = {
+            "command_name": "base_velocity",
+            "std": 0.35,
+            "min_height": 0.38,
+            "safe_height": 0.66,
+            "min_upright": 0.18,
+            "safe_upright": 0.68,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        }
+        self.rewards.goal_reached_bonus.weight = 20.0
+        self.rewards.goal_reached_bonus.params = {
+            "goal_x": CURRICULUM_PROXY_GOAL_X,
+            "start_x": MAP_START_POS[0],
+            "bonus": 1.0,
+        }
+        self.rewards.stand_up_height.weight = CURRICULUM_STAND_UP_HEIGHT_WEIGHT
+        self.rewards.stand_up_height.params = {
+            "min_height": 0.42,
+            "target_height": 0.68,
+            "min_upright": 0.22,
+            "safe_upright": 0.68,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        }
+        self.rewards.stance_leg_extension.weight = 3.0
+        self.rewards.stance_leg_extension.params = {
+            "target_hip_pitch": -0.28,
+            "target_knee": 0.79,
+            "target_ankle": -0.52,
+            "posture_sigma": 0.20,
+            "stance_contact_time": 0.025,
+            "min_height": 0.40,
+            "safe_height": 0.68,
+            "min_upright": 0.18,
+            "safe_upright": 0.66,
+            "contact_force_threshold": 1.0,
+            "hip_cfg": SceneEntityCfg("robot", joint_names=".*_hip_pitch"),
+            "knee_cfg": SceneEntityCfg("robot", joint_names=".*_knee"),
+            "ankle_cfg": SceneEntityCfg("robot", joint_names=".*_ankle"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "torso_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        }
+        self.rewards.upright_survival.weight = CURRICULUM_UPRIGHT_SURVIVAL_WEIGHT
+        self.rewards.upright_survival.params = {
+            "min_height": 0.38,
+            "safe_height": 0.64,
+            "min_upright": 0.18,
+            "safe_upright": 0.66,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        }
+        self.rewards.low_height_penalty.weight = -0.35
+        self.rewards.low_height_penalty.params = {"min_height": 0.46}
+        self.rewards.forward_speed = None
+        self.rewards.flat_orientation_l2.weight = 0.0
+        self.rewards.dof_torques_l2.weight = 0.0
+        self.rewards.dof_acc_l2.weight = 0.0
+        self.rewards.action_rate_l2.weight = -0.001
+
+    def _apply_curriculum_autopilot_overrides(self):
+        overrides = _get_autopilot_override("curriculum")
+        if not overrides:
+            return
+
+        if "num_envs" in overrides:
+            self.scene.num_envs = int(overrides["num_envs"])
+        if "action_scale" in overrides:
+            self.actions.joint_pos.scale = float(overrides["action_scale"])
+        if "goal_x" in overrides:
+            goal_x = float(overrides["goal_x"])
+            self.rewards.goal_progress.params["goal_x"] = goal_x
+            self.rewards.goal_reached_bonus.params["goal_x"] = goal_x
+            self.terminations.goal_reached.params["goal_x"] = goal_x
+        if "lin_vel_x" in overrides:
+            self.commands.base_velocity.ranges.lin_vel_x = _tuple2(
+                overrides["lin_vel_x"], self.commands.base_velocity.ranges.lin_vel_x
+            )
+        if "track_lin_vel_xy_weight" in overrides:
+            self.rewards.track_lin_vel_xy_exp.weight = float(overrides["track_lin_vel_xy_weight"])
+        if "track_lin_vel_xy_std" in overrides:
+            self.rewards.track_lin_vel_xy_exp.params["std"] = float(overrides["track_lin_vel_xy_std"])
+        if "goal_progress_weight" in overrides:
+            self.rewards.goal_progress.weight = float(overrides["goal_progress_weight"])
+        if "goal_progress_min_height" in overrides:
+            self.rewards.goal_progress.params["min_height"] = float(overrides["goal_progress_min_height"])
+        if "goal_progress_safe_height" in overrides:
+            self.rewards.goal_progress.params["safe_height"] = float(overrides["goal_progress_safe_height"])
+        if "goal_progress_min_upright" in overrides:
+            self.rewards.goal_progress.params["min_upright"] = float(overrides["goal_progress_min_upright"])
+        if "goal_progress_safe_upright" in overrides:
+            self.rewards.goal_progress.params["safe_upright"] = float(overrides["goal_progress_safe_upright"])
+        if "goal_reached_bonus_weight" in overrides:
+            self.rewards.goal_reached_bonus.weight = float(overrides["goal_reached_bonus_weight"])
+        if "stand_up_height_weight" in overrides:
+            self.rewards.stand_up_height.weight = float(overrides["stand_up_height_weight"])
+        if "stand_up_min_height" in overrides:
+            self.rewards.stand_up_height.params["min_height"] = float(overrides["stand_up_min_height"])
+        if "stand_up_target_height" in overrides:
+            self.rewards.stand_up_height.params["target_height"] = float(overrides["stand_up_target_height"])
+        if "stand_up_min_upright" in overrides:
+            self.rewards.stand_up_height.params["min_upright"] = float(overrides["stand_up_min_upright"])
+        if "stand_up_safe_upright" in overrides:
+            self.rewards.stand_up_height.params["safe_upright"] = float(overrides["stand_up_safe_upright"])
+        if "upright_survival_weight" in overrides:
+            self.rewards.upright_survival.weight = float(overrides["upright_survival_weight"])
+        if "upright_survival_min_height" in overrides:
+            self.rewards.upright_survival.params["min_height"] = float(overrides["upright_survival_min_height"])
+        if "upright_survival_safe_height" in overrides:
+            self.rewards.upright_survival.params["safe_height"] = float(overrides["upright_survival_safe_height"])
+        if "upright_survival_min_upright" in overrides:
+            self.rewards.upright_survival.params["min_upright"] = float(overrides["upright_survival_min_upright"])
+        if "upright_survival_safe_upright" in overrides:
+            self.rewards.upright_survival.params["safe_upright"] = float(overrides["upright_survival_safe_upright"])
+        if "feet_air_time_weight" in overrides:
+            self.rewards.feet_air_time.weight = float(overrides["feet_air_time_weight"])
+        if "stance_leg_extension_weight" in overrides:
+            self.rewards.stance_leg_extension.weight = float(overrides["stance_leg_extension_weight"])
+        if "stance_leg_extension_sigma" in overrides:
+            self.rewards.stance_leg_extension.params["posture_sigma"] = float(overrides["stance_leg_extension_sigma"])
+        if "stance_leg_extension_contact_time" in overrides:
+            self.rewards.stance_leg_extension.params["stance_contact_time"] = float(
+                overrides["stance_leg_extension_contact_time"]
+            )
+        if "stance_leg_extension_min_height" in overrides:
+            self.rewards.stance_leg_extension.params["min_height"] = float(overrides["stance_leg_extension_min_height"])
+        if "stance_leg_extension_safe_height" in overrides:
+            self.rewards.stance_leg_extension.params["safe_height"] = float(overrides["stance_leg_extension_safe_height"])
+        if "stance_leg_extension_min_upright" in overrides:
+            self.rewards.stance_leg_extension.params["min_upright"] = float(
+                overrides["stance_leg_extension_min_upright"]
+            )
+        if "stance_leg_extension_safe_upright" in overrides:
+            self.rewards.stance_leg_extension.params["safe_upright"] = float(
+                overrides["stance_leg_extension_safe_upright"]
+            )
+        if "low_height_penalty_weight" in overrides:
+            self.rewards.low_height_penalty.weight = float(overrides["low_height_penalty_weight"])
+        if "low_height_penalty_minimum" in overrides:
+            self.rewards.low_height_penalty.params["min_height"] = float(overrides["low_height_penalty_minimum"])
+        if "step_reward" in overrides and isinstance(overrides["step_reward"], dict):
+            step_reward = overrides["step_reward"]
+            step_reward_mode = str(step_reward.get("mode", "early_step"))
+            if step_reward_mode == "single_swing":
+                self.rewards.feet_air_time.func = custom_mdp.gated_single_swing_step_reward
+            else:
+                self.rewards.feet_air_time.func = custom_mdp.gated_early_step_reward
+            if "min_air_time" in step_reward:
+                self.rewards.feet_air_time.params["min_air_time"] = float(step_reward["min_air_time"])
+            if "target_air_time" in step_reward:
+                self.rewards.feet_air_time.params["target_air_time"] = float(step_reward["target_air_time"])
+            if "min_stance_time" in step_reward:
+                self.rewards.feet_air_time.params["min_stance_time"] = float(step_reward["min_stance_time"])
+            if "min_forward_speed" in step_reward:
+                self.rewards.feet_air_time.params["min_forward_speed"] = float(step_reward["min_forward_speed"])
+            if "min_height" in step_reward:
+                self.rewards.feet_air_time.params["min_height"] = float(step_reward["min_height"])
+            if "safe_height" in step_reward:
+                self.rewards.feet_air_time.params["safe_height"] = float(step_reward["safe_height"])
+            if "min_upright" in step_reward:
+                self.rewards.feet_air_time.params["min_upright"] = float(step_reward["min_upright"])
+            if "safe_upright" in step_reward:
+                self.rewards.feet_air_time.params["safe_upright"] = float(step_reward["safe_upright"])
+        if "reset_joints_position_range" in overrides:
+            self.events.reset_robot_joints.params["position_range"] = _tuple2(
+                overrides["reset_joints_position_range"],
+                self.events.reset_robot_joints.params["position_range"],
+            )
+        if "low_height_termination_minimum" in overrides:
+            minimum_height = float(overrides["low_height_termination_minimum"])
+            self.terminations.low_height.params["minimum_height"] = minimum_height
+        if "goal_reached_min_height" in overrides:
+            self.terminations.goal_reached.params["min_height"] = float(overrides["goal_reached_min_height"])
+        if "goal_reached_min_upright" in overrides:
+            self.terminations.goal_reached.params["min_upright"] = float(overrides["goal_reached_min_upright"])
+        if "goal_reached_contact_force_threshold" in overrides:
+            self.terminations.goal_reached.params["contact_force_threshold"] = float(
+                overrides["goal_reached_contact_force_threshold"]
+            )
 
     def __post_init__(self):
         super().__post_init__()
+        self._apply_curriculum_reward_overrides()
 
         self.scene.robot = UNITREE_H1_MINIMAL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        if self.scene.height_scanner is not None:
-            self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/torso_link"
-
-        self.scene.terrain = TerrainImporterCfg(
-            prim_path="/World/ground",
-            terrain_type="generator",
-            terrain_generator=FINAL_PROJECT_CURRICULUM_TERRAINS_CFG,
-            max_init_terrain_level=0,
-            collision_group=-1,
-            physics_material=sim_utils.RigidBodyMaterialCfg(
-                friction_combine_mode="multiply",
-                restitution_combine_mode="multiply",
-                static_friction=1.0,
-                dynamic_friction=1.0,
-            ),
-            visual_material=sim_utils.MdlFileCfg(
-                mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
-                project_uvw=True,
-                texture_scale=(0.25, 0.25),
-            ),
+        self.scene.height_scanner = RayCasterCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/torso_link",
+            offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+            ray_alignment="yaw",
+            pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
             debug_vis=False,
+            mesh_prim_paths=["/World/ground"],
         )
-
-        # Old aggressive settings for reference:
-        # self.commands.base_velocity.ranges.lin_vel_x = (0.0, 1.0)
-        # self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)
-        # self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
-        # self.commands.base_velocity.ranges.heading = (-3.14, 3.14)
-        # Start with straight-ahead walking and grow speed only after stable gait appears.
-        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.4)
-        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (-0.3, 0.3)
-        self.commands.base_velocity.ranges.heading = None
+        self.scene.final_map = None
+        self.scene.num_envs = 32
+        self.scene.env_spacing = MAP_ENV_SPACING
+        self.actions.joint_pos.scale = 0.28
         self.commands.base_velocity.heading_command = False
+        self.commands.base_velocity.rel_heading_envs = 0.0
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.base_velocity.resampling_time_range = (20.0, 20.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.04, 0.12)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self.commands.base_velocity.ranges.heading = None
+        self.observations.policy.height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            clip=(-1.0, 1.0),
+        )
+        self.observations.policy.velocity_commands = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "base_velocity"},
+        )
+        self.observations.policy.goal_distance = ObsTerm(
+            func=custom_mdp.goal_distance_x,
+            params={"goal_x": CURRICULUM_PROXY_GOAL_X, "start_x": MAP_START_POS[0], "normalize": True},
+        )
+        self.events.reset_robot_joints.params["position_range"] = (0.99, 1.01)
+        self.terminations.goal_reached = DoneTerm(
+            func=custom_mdp.goal_reached_upright,
+            params={
+                "goal_x": CURRICULUM_PROXY_GOAL_X,
+                "start_x": MAP_START_POS[0],
+                "min_height": 0.50,
+                "min_upright": 0.72,
+                "contact_force_threshold": 1.0,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+            },
+        )
+        self.terminations.low_height = DoneTerm(
+            func=mdp.root_height_below_minimum,
+            params={"minimum_height": 0.42, "asset_cfg": SceneEntityCfg("robot")},
+        )
+        self._apply_curriculum_autopilot_overrides()
+        self.finalize_after_overrides()
 
-        self.episode_length_s = 20.0
-        self.terminations.goal_reached = DoneTerm(func=custom_mdp.goal_reached, params={"goal_x": GOAL_X})
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_training(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
 
 
 @configclass
 class FinalProjectUnitreeH1EnvCfg_PLAY(FinalProjectUnitreeH1EnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        self.scene.num_envs = 50
-        self.scene.env_spacing = 2.5
+        self.scene.num_envs = 1
         self.observations.policy.enable_corruption = False
         self.events.push_robot = None
+        self.finalize_after_overrides()
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_play(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
 
 
 @configclass
@@ -400,21 +965,11 @@ class FinalProjectUnitreeH1MapEnvCfg(FinalProjectUnitreeH1EnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
-
-        # Load the arena map through the stock terrain importer instead of as a separate scene asset.
-        self.scene.final_map = None
-        self.curriculum.terrain_levels = None
-
-        # Preserve the observation width from the curriculum stage without depending on map mesh parsing.
-        self.scene.height_scanner = None
-        self.observations.policy.height_scan = ObsTerm(
-            func=custom_mdp.zero_height_scan,
-            params={"num_rays": 187},
-        )
-
-        # Map stage is more expensive, so start smaller by default.
         self.scene.num_envs = 64
-        self.scene.env_spacing = MAP_ENV_SPACING
+        self.commands.base_velocity.ranges.lin_vel_x = (0.08, 0.22)
+        self.rewards.goal_progress.params["goal_x"] = GOAL_X
+        self.rewards.goal_reached_bonus.params["goal_x"] = GOAL_X
+        self.terminations.goal_reached.params["goal_x"] = GOAL_X
         self.finalize_after_overrides()
 
     def finalize_after_overrides(self):
@@ -484,6 +1039,33 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
         self.rewards.goal_progress.params["normalize_by_goal"] = False
         self.rewards.track_lin_vel_xy_exp.weight = BASELINE_TRACK_LIN_VEL_WEIGHT
         self.rewards.goal_reached_bonus.weight = 40.0
+        self.rewards.stand_up_height.weight = 0.0
+        self.rewards.stand_up_height.params = {
+            "min_height": 0.46,
+            "target_height": 0.70,
+            "min_upright": 0.3,
+            "safe_upright": 0.75,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        }
+        self.rewards.stance_leg_extension.weight = 0.0
+        self.rewards.stance_leg_extension.params = {
+            "target_hip_pitch": -0.28,
+            "target_knee": 0.79,
+            "target_ankle": -0.52,
+            "posture_sigma": 0.20,
+            "stance_contact_time": 0.03,
+            "min_height": 0.44,
+            "safe_height": 0.70,
+            "min_upright": 0.25,
+            "safe_upright": 0.75,
+            "contact_force_threshold": 1.0,
+            "hip_cfg": SceneEntityCfg("robot", joint_names=".*_hip_pitch"),
+            "knee_cfg": SceneEntityCfg("robot", joint_names=".*_knee"),
+            "ankle_cfg": SceneEntityCfg("robot", joint_names=".*_ankle"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "torso_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        }
         self.rewards.upright_survival.weight = 0.75
         self.rewards.upright_survival.params = {
             "min_height": 0.42,
@@ -535,6 +1117,135 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
             )
         if self.rewards.forward_speed is not None:
             raise ValueError("Baseline forward_speed reward must stay disabled.")
+
+    def _apply_baseline_autopilot_overrides(self):
+        """Allow the autopilot loop to tune a narrow set of baseline knobs."""
+
+        overrides = _get_autopilot_override("baseline")
+        if not overrides:
+            return
+
+        if "num_envs" in overrides:
+            self.scene.num_envs = int(overrides["num_envs"])
+        if "action_scale" in overrides:
+            self.actions.joint_pos.scale = float(overrides["action_scale"])
+        if "lin_vel_x" in overrides:
+            self.commands.base_velocity.ranges.lin_vel_x = _tuple2(overrides["lin_vel_x"], self.commands.base_velocity.ranges.lin_vel_x)
+        if "track_lin_vel_xy_weight" in overrides:
+            self.rewards.track_lin_vel_xy_exp.weight = float(overrides["track_lin_vel_xy_weight"])
+        if "track_lin_vel_xy_std" in overrides:
+            self.rewards.track_lin_vel_xy_exp.params["std"] = float(overrides["track_lin_vel_xy_std"])
+        if "goal_progress_weight" in overrides:
+            self.rewards.goal_progress.weight = float(overrides["goal_progress_weight"])
+        if "goal_progress_min_height" in overrides:
+            self.rewards.goal_progress.params["min_height"] = float(overrides["goal_progress_min_height"])
+        if "goal_progress_safe_height" in overrides:
+            self.rewards.goal_progress.params["safe_height"] = float(overrides["goal_progress_safe_height"])
+        if "goal_progress_min_upright" in overrides:
+            self.rewards.goal_progress.params["min_upright"] = float(overrides["goal_progress_min_upright"])
+        if "goal_progress_safe_upright" in overrides:
+            self.rewards.goal_progress.params["safe_upright"] = float(overrides["goal_progress_safe_upright"])
+        if "goal_progress_contact_force_threshold" in overrides:
+            self.rewards.goal_progress.params["contact_force_threshold"] = float(
+                overrides["goal_progress_contact_force_threshold"]
+            )
+        if "goal_reached_bonus_weight" in overrides:
+            self.rewards.goal_reached_bonus.weight = float(overrides["goal_reached_bonus_weight"])
+        if "stand_up_height_weight" in overrides:
+            self.rewards.stand_up_height.weight = float(overrides["stand_up_height_weight"])
+        if "stand_up_min_height" in overrides:
+            self.rewards.stand_up_height.params["min_height"] = float(overrides["stand_up_min_height"])
+        if "stand_up_target_height" in overrides:
+            self.rewards.stand_up_height.params["target_height"] = float(overrides["stand_up_target_height"])
+        if "stand_up_min_upright" in overrides:
+            self.rewards.stand_up_height.params["min_upright"] = float(overrides["stand_up_min_upright"])
+        if "stand_up_safe_upright" in overrides:
+            self.rewards.stand_up_height.params["safe_upright"] = float(overrides["stand_up_safe_upright"])
+        if "stand_up_contact_force_threshold" in overrides:
+            self.rewards.stand_up_height.params["contact_force_threshold"] = float(
+                overrides["stand_up_contact_force_threshold"]
+            )
+        if "upright_survival_weight" in overrides:
+            self.rewards.upright_survival.weight = float(overrides["upright_survival_weight"])
+        if "upright_survival_min_height" in overrides:
+            self.rewards.upright_survival.params["min_height"] = float(overrides["upright_survival_min_height"])
+        if "upright_survival_safe_height" in overrides:
+            self.rewards.upright_survival.params["safe_height"] = float(overrides["upright_survival_safe_height"])
+        if "upright_survival_min_upright" in overrides:
+            self.rewards.upright_survival.params["min_upright"] = float(overrides["upright_survival_min_upright"])
+        if "upright_survival_safe_upright" in overrides:
+            self.rewards.upright_survival.params["safe_upright"] = float(overrides["upright_survival_safe_upright"])
+        if "upright_survival_contact_force_threshold" in overrides:
+            self.rewards.upright_survival.params["contact_force_threshold"] = float(
+                overrides["upright_survival_contact_force_threshold"]
+            )
+        if "feet_air_time_weight" in overrides:
+            self.rewards.feet_air_time.weight = float(overrides["feet_air_time_weight"])
+        if "stance_leg_extension_weight" in overrides:
+            self.rewards.stance_leg_extension.weight = float(overrides["stance_leg_extension_weight"])
+        if "stance_leg_extension_sigma" in overrides:
+            self.rewards.stance_leg_extension.params["posture_sigma"] = float(overrides["stance_leg_extension_sigma"])
+        if "stance_leg_extension_contact_time" in overrides:
+            self.rewards.stance_leg_extension.params["stance_contact_time"] = float(
+                overrides["stance_leg_extension_contact_time"]
+            )
+        if "stance_leg_extension_min_height" in overrides:
+            self.rewards.stance_leg_extension.params["min_height"] = float(overrides["stance_leg_extension_min_height"])
+        if "stance_leg_extension_safe_height" in overrides:
+            self.rewards.stance_leg_extension.params["safe_height"] = float(overrides["stance_leg_extension_safe_height"])
+        if "stance_leg_extension_min_upright" in overrides:
+            self.rewards.stance_leg_extension.params["min_upright"] = float(
+                overrides["stance_leg_extension_min_upright"]
+            )
+        if "stance_leg_extension_safe_upright" in overrides:
+            self.rewards.stance_leg_extension.params["safe_upright"] = float(
+                overrides["stance_leg_extension_safe_upright"]
+            )
+        if "low_height_penalty_weight" in overrides:
+            self.rewards.low_height_penalty.weight = float(overrides["low_height_penalty_weight"])
+        if "low_height_penalty_minimum" in overrides:
+            self.rewards.low_height_penalty.params["min_height"] = float(overrides["low_height_penalty_minimum"])
+        if "step_reward" in overrides and isinstance(overrides["step_reward"], dict):
+            step_reward = overrides["step_reward"]
+            step_reward_mode = str(step_reward.get("mode", "single_swing"))
+            if step_reward_mode == "early_step":
+                self.rewards.feet_air_time.func = custom_mdp.gated_early_step_reward
+            else:
+                self.rewards.feet_air_time.func = custom_mdp.gated_single_swing_step_reward
+            if "min_air_time" in step_reward:
+                self.rewards.feet_air_time.params["min_air_time"] = float(step_reward["min_air_time"])
+            if "target_air_time" in step_reward:
+                self.rewards.feet_air_time.params["target_air_time"] = float(step_reward["target_air_time"])
+            if "min_stance_time" in step_reward:
+                self.rewards.feet_air_time.params["min_stance_time"] = float(step_reward["min_stance_time"])
+            if "min_forward_speed" in step_reward:
+                self.rewards.feet_air_time.params["min_forward_speed"] = float(step_reward["min_forward_speed"])
+        if "reset_joints_position_range" in overrides:
+            self.events.reset_robot_joints.params["position_range"] = _tuple2(
+                overrides["reset_joints_position_range"],
+                self.events.reset_robot_joints.params["position_range"],
+            )
+        if "low_height_termination_minimum" in overrides:
+            minimum_height = float(overrides["low_height_termination_minimum"])
+            if getattr(self.terminations, "low_height", None) is None:
+                self.terminations.low_height = DoneTerm(
+                    func=mdp.root_height_below_minimum,
+                    params={"minimum_height": minimum_height, "asset_cfg": SceneEntityCfg("robot")},
+                )
+            else:
+                self.terminations.low_height.params["minimum_height"] = minimum_height
+        if bool(overrides.get("use_goal_reached_upright")):
+            self.terminations.goal_reached = DoneTerm(
+                func=custom_mdp.goal_reached_upright,
+                params={
+                    "goal_x": GOAL_X,
+                    "start_x": MAP_START_POS[0],
+                    "min_height": float(overrides.get("goal_reached_min_height", 0.55)),
+                    "min_upright": float(overrides.get("goal_reached_min_upright", 0.75)),
+                    "contact_force_threshold": float(overrides.get("goal_reached_contact_force_threshold", 1.0)),
+                    "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+                },
+            )
 
     def __post_init__(self):
         super().__post_init__()
@@ -592,6 +1303,7 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
             raise ValueError(
                 f"Baseline lin_vel_x range={self.commands.base_velocity.ranges.lin_vel_x} expected (0.35, 0.6)."
             )
+        self._apply_baseline_autopilot_overrides()
         self.finalize_after_overrides()
 
     def finalize_after_overrides(self):
@@ -633,17 +1345,473 @@ class FinalProjectUnitreeH1BaselineEnvCfg_PLAY(FinalProjectUnitreeH1BaselineEnvC
 
 
 @configclass
+class FinalProjectUnitreeH1RoughGoalBaselineEnvCfg(H1RoughEnvCfg):
+    """Sibling baseline: stock H1 rough rewards plus explicit goal terms on the final map."""
+
+    rewards: FinalProjectRoughGoalBaselineRewards = FinalProjectRoughGoalBaselineRewards()
+
+    def _validate_rough_goal_baseline_cfg(self):
+        """Fail fast if the intended rough-goal sibling config gets overridden."""
+        if self.scene.terrain.terrain_type != "usd":
+            raise ValueError(f"Rough-goal baseline terrain_type={self.scene.terrain.terrain_type} expected 'usd'.")
+        if self.commands.base_velocity.resampling_time_range != (20.0, 20.0):
+            raise ValueError(
+                "Rough-goal baseline base_velocity resampling_time_range was overridden unexpectedly. "
+                f"Got {self.commands.base_velocity.resampling_time_range}."
+            )
+        if self.rewards.track_ang_vel_z_exp.weight != ROUGH_GOAL_BASELINE_TRACK_ANG_VEL_WEIGHT:
+            raise ValueError(
+                "Rough-goal baseline track_ang_vel_z_exp weight="
+                f"{self.rewards.track_ang_vel_z_exp.weight} expected {ROUGH_GOAL_BASELINE_TRACK_ANG_VEL_WEIGHT}."
+            )
+        if self.rewards.termination_penalty.weight != ROUGH_GOAL_BASELINE_TERMINATION_PENALTY:
+            raise ValueError(
+                "Rough-goal baseline termination_penalty weight="
+                f"{self.rewards.termination_penalty.weight} expected {ROUGH_GOAL_BASELINE_TERMINATION_PENALTY}."
+            )
+        if self.terminations.goal_reached.func is not custom_mdp.goal_reached_upright:
+            raise ValueError("Rough-goal baseline goal_reached must use goal_reached_upright.")
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.rewards.flat_orientation_l2 = None
+        self.rewards.dof_torques_l2 = None
+        self.rewards.action_rate_l2 = None
+        self.rewards.dof_acc_l2 = None
+        self.scene.robot = UNITREE_H1_MINIMAL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.height_scanner = RayCasterCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/torso_link",
+            offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+            ray_alignment="yaw",
+            pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+            debug_vis=False,
+            mesh_prim_paths=["/World/ground"],
+        )
+        self.scene.final_map = None
+        self.curriculum.terrain_levels = None
+        self.scene.num_envs = 64
+        self.scene.env_spacing = MAP_ENV_SPACING
+        self.actions.joint_pos.scale = 0.4
+        self.commands.base_velocity.heading_command = False
+        self.commands.base_velocity.rel_heading_envs = 0.0
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.base_velocity.resampling_time_range = (20.0, 20.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.8, 1.2)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self.commands.base_velocity.ranges.heading = None
+        self.observations.policy.height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            clip=(-1.0, 1.0),
+        )
+        self.observations.policy.velocity_commands = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "base_velocity"},
+        )
+        self.observations.policy.goal_distance = ObsTerm(
+            func=custom_mdp.goal_distance_x,
+            params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "normalize": True},
+        )
+        self.events.reset_robot_joints.params["position_range"] = (0.95, 1.05)
+        self.episode_length_s = 20.0
+        self.terminations.goal_reached = DoneTerm(
+            func=custom_mdp.goal_reached_upright,
+            params={
+                "goal_x": GOAL_X,
+                "start_x": MAP_START_POS[0],
+                "min_height": 0.55,
+                "min_upright": 0.72,
+                "contact_force_threshold": 1.0,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+            },
+        )
+        self.finalize_after_overrides()
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_training(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+        self._validate_rough_goal_baseline_cfg()
+
+
+@configclass
+class FinalProjectUnitreeH1RoughGoalBaselineEnvCfg_PLAY(FinalProjectUnitreeH1RoughGoalBaselineEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.observations.policy.enable_corruption = False
+        self.finalize_after_overrides()
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_play(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+        self._validate_rough_goal_baseline_cfg()
+
+
+@configclass
+class FinalProjectUnitreeH1SpeedRunEnvCfg(FinalProjectUnitreeH1RoughGoalBaselineEnvCfg):
+    """Speed-run: optimized for unlimited-retry fastest expected total time to goal.
+
+    Fall-forward is intentionally permitted — goal_progress is ungated and the episode
+    terminates on any goal crossing (not just upright). Time-remaining bonus rewards
+    faster arrivals directly.
+    """
+
+    rewards: FinalProjectSpeedRunRewards = FinalProjectSpeedRunRewards()
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_training(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = SPEEDRUN_LIN_VEL_X_RANGE
+        self.terminations.goal_reached = DoneTerm(
+            func=custom_mdp.goal_reached,
+            params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0]},
+        )
+
+
+@configclass
+class FinalProjectUnitreeH1SpeedRunEnvCfg_PLAY(FinalProjectUnitreeH1SpeedRunEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.observations.policy.enable_corruption = False
+        self.finalize_after_overrides()
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_play(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkEnvCfg(FinalProjectUnitreeH1RoughGoalBaselineEnvCfg):
+    """Fast-walk: fastest upright goal reaching; fall-forward blocked by speed-gated progress.
+
+    Keeps goal_reached_upright termination. Speed-gated goal_progress requires the robot
+    to be upright AND above min_forward_speed to earn shaping reward, pushing toward
+    genuinely fast bipedal locomotion.
+    """
+
+    rewards: FinalProjectFastWalkRewards = FinalProjectFastWalkRewards()
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_training(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = FASTWALK_LIN_VEL_X_RANGE
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkEnvCfg_PLAY(FinalProjectUnitreeH1FastWalkEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.observations.policy.enable_corruption = False
+        self.finalize_after_overrides()
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_play(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+
+
+@configclass
+class FinalProjectUnitreeH1MinimalRewardEnvCfg(H1RoughEnvCfg):
+    """Diagnostic sibling: keep the final-map task wiring and reduce rewards to the minimum set."""
+
+    rewards: FinalProjectMinimalRewardRewards = FinalProjectMinimalRewardRewards()
+
+    def _apply_minimal_reward_autopilot_overrides(self):
+        overrides = _get_autopilot_override("minimal_reward")
+        if not overrides:
+            return
+
+        if "num_envs" in overrides:
+            self.scene.num_envs = int(overrides["num_envs"])
+        if "lin_vel_x" in overrides:
+            self.commands.base_velocity.ranges.lin_vel_x = _tuple2(overrides["lin_vel_x"], self.commands.base_velocity.ranges.lin_vel_x)
+        if "goal_progress_weight" in overrides:
+            self.rewards.goal_progress.weight = float(overrides["goal_progress_weight"])
+        if "goal_reached_bonus_weight" in overrides:
+            self.rewards.goal_reached_bonus.weight = float(overrides["goal_reached_bonus_weight"])
+        if "low_height_termination_minimum" in overrides:
+            self.terminations.low_height.params["minimum_height"] = float(overrides["low_height_termination_minimum"])
+        if "bad_orientation_limit" in overrides:
+            self.terminations.bad_orientation.params["limit_angle"] = float(overrides["bad_orientation_limit"])
+
+    def _validate_minimal_reward_cfg(self):
+        """Fail fast if the intended minimal-reward config gets overridden."""
+        if self.scene.terrain.terrain_type != "usd":
+            raise ValueError(f"Minimal-reward terrain_type={self.scene.terrain.terrain_type} expected 'usd'.")
+        if self.commands.base_velocity.resampling_time_range != (20.0, 20.0):
+            raise ValueError(
+                "Minimal-reward base_velocity resampling_time_range was overridden unexpectedly. "
+                f"Got {self.commands.base_velocity.resampling_time_range}."
+            )
+        if self.commands.base_velocity.ranges.lin_vel_x != MINIMAL_REWARD_LIN_VEL_X_RANGE:
+            raise ValueError(
+                f"Minimal-reward lin_vel_x range={self.commands.base_velocity.ranges.lin_vel_x} "
+                f"expected {MINIMAL_REWARD_LIN_VEL_X_RANGE}."
+            )
+        if self.rewards.termination_penalty.weight != -200.0:
+            raise ValueError(
+                f"Minimal-reward termination_penalty weight={self.rewards.termination_penalty.weight} expected -200.0."
+            )
+        if self.rewards.track_lin_vel_xy_exp.weight != 1.0:
+            raise ValueError(
+                f"Minimal-reward track_lin_vel_xy_exp weight={self.rewards.track_lin_vel_xy_exp.weight} expected 1.0."
+            )
+        for reward_name in (
+            "ang_vel_xy_l2",
+            "track_ang_vel_z_exp",
+            "feet_air_time",
+            "feet_slide",
+            "flat_orientation_l2",
+            "dof_pos_limits",
+            "joint_deviation_hip",
+            "joint_deviation_arms",
+            "joint_deviation_torso",
+            "action_rate_l2",
+            "dof_acc_l2",
+            "dof_torques_l2",
+        ):
+            if getattr(self.rewards, reward_name) is not None:
+                raise ValueError(f"Minimal-reward {reward_name} must stay disabled.")
+        if self.rewards.goal_progress.weight != MINIMAL_REWARD_GOAL_PROGRESS_WEIGHT:
+            raise ValueError(
+                f"Minimal-reward goal_progress weight={self.rewards.goal_progress.weight} "
+                f"expected {MINIMAL_REWARD_GOAL_PROGRESS_WEIGHT}."
+            )
+        if self.rewards.goal_reached_bonus.weight != MINIMAL_REWARD_GOAL_REACHED_BONUS_WEIGHT:
+            raise ValueError(
+                f"Minimal-reward goal_reached_bonus weight={self.rewards.goal_reached_bonus.weight} "
+                f"expected {MINIMAL_REWARD_GOAL_REACHED_BONUS_WEIGHT}."
+            )
+        if self.terminations.goal_reached.func is not custom_mdp.goal_reached_upright:
+            raise ValueError("Minimal-reward goal_reached must use custom_mdp.goal_reached_upright.")
+        if getattr(self.terminations, "low_height", None) is None:
+            raise ValueError("Minimal-reward low_height termination must stay enabled.")
+        if getattr(self.terminations, "bad_orientation", None) is None:
+            raise ValueError("Minimal-reward bad_orientation termination must stay enabled.")
+        if self.terminations.bad_orientation.func is not custom_mdp.bad_orientation_safe:
+            raise ValueError("Minimal-reward bad_orientation must use custom_mdp.bad_orientation_safe.")
+        if self.terminations.low_height.params["minimum_height"] != 0.45:
+            raise ValueError("Minimal-reward low_height minimum_height must stay at 0.45.")
+        if self.terminations.bad_orientation.params["limit_angle"] != 1.15:
+            raise ValueError("Minimal-reward bad_orientation limit_angle must stay at 1.15.")
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.rewards.ang_vel_xy_l2 = None
+        self.rewards.flat_orientation_l2 = None
+        self.rewards.dof_torques_l2 = None
+        self.rewards.action_rate_l2 = None
+        self.rewards.dof_acc_l2 = None
+        self.scene.robot = UNITREE_H1_MINIMAL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.height_scanner = RayCasterCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/torso_link",
+            offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+            ray_alignment="yaw",
+            pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+            debug_vis=False,
+            mesh_prim_paths=["/World/ground"],
+        )
+        self.scene.final_map = None
+        self.curriculum.terrain_levels = None
+        self.scene.num_envs = 64
+        self.scene.env_spacing = MAP_ENV_SPACING
+        self.actions.joint_pos.scale = 0.4
+        self.commands.base_velocity.heading_command = False
+        self.commands.base_velocity.rel_heading_envs = 0.0
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.base_velocity.resampling_time_range = (20.0, 20.0)
+        self.commands.base_velocity.ranges.lin_vel_x = MINIMAL_REWARD_LIN_VEL_X_RANGE
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self.commands.base_velocity.ranges.heading = None
+        self.observations.policy.height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            clip=(-1.0, 1.0),
+        )
+        self.observations.policy.velocity_commands = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "base_velocity"},
+        )
+        self.observations.policy.goal_distance = ObsTerm(
+            func=custom_mdp.goal_distance_x,
+            params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "normalize": True},
+        )
+        self.events.reset_robot_joints.params["position_range"] = (0.95, 1.05)
+        self.episode_length_s = 20.0
+        self.terminations.goal_reached = DoneTerm(
+            func=custom_mdp.goal_reached_upright,
+            params={
+                "goal_x": GOAL_X,
+                "start_x": MAP_START_POS[0],
+                "min_height": 0.55,
+                "min_upright": 0.75,
+                "contact_force_threshold": 1.0,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+            },
+        )
+        self.terminations.low_height = DoneTerm(
+            func=mdp.root_height_below_minimum,
+            params={"minimum_height": 0.45, "asset_cfg": SceneEntityCfg("robot")},
+        )
+        self.terminations.bad_orientation = DoneTerm(
+            func=custom_mdp.bad_orientation_safe,
+            params={"limit_angle": 1.15, "asset_cfg": SceneEntityCfg("robot")},
+        )
+        self._apply_minimal_reward_autopilot_overrides()
+        self.finalize_after_overrides()
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_training(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+        self._validate_minimal_reward_cfg()
+
+
+@configclass
+class FinalProjectUnitreeH1MinimalRewardEnvCfg_PLAY(FinalProjectUnitreeH1MinimalRewardEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.observations.policy.enable_corruption = False
+        self.finalize_after_overrides()
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_play(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+        self._validate_minimal_reward_cfg()
+
+
+@configclass
 class FinalProjectUnitreeH1StabilityArenaEnvCfg(FinalProjectUnitreeH1EnvCfg):
     """Stage A1: warm-up on curated easy terrain arena."""
+
+    def _apply_stability_warmup_autopilot_overrides(self):
+        overrides = _get_autopilot_override("stability_warmup")
+        if not overrides:
+            return
+
+        if "num_envs" in overrides:
+            self.scene.num_envs = int(overrides["num_envs"])
+        if "lin_vel_x" in overrides:
+            self.commands.base_velocity.ranges.lin_vel_x = _tuple2(overrides["lin_vel_x"], self.commands.base_velocity.ranges.lin_vel_x)
+        if "lin_vel_y" in overrides:
+            self.commands.base_velocity.ranges.lin_vel_y = _tuple2(overrides["lin_vel_y"], self.commands.base_velocity.ranges.lin_vel_y)
+        if "ang_vel_z" in overrides:
+            self.commands.base_velocity.ranges.ang_vel_z = _tuple2(overrides["ang_vel_z"], self.commands.base_velocity.ranges.ang_vel_z)
+        if "resampling_time_range" in overrides:
+            self.commands.base_velocity.resampling_time_range = _tuple2(
+                overrides["resampling_time_range"], self.commands.base_velocity.resampling_time_range
+            )
+        if "rel_standing_envs" in overrides:
+            self.commands.base_velocity.rel_standing_envs = float(overrides["rel_standing_envs"])
+        if "rel_heading_envs" in overrides:
+            self.commands.base_velocity.rel_heading_envs = float(overrides["rel_heading_envs"])
 
     def __post_init__(self):
         super().__post_init__()
         self.curriculum.terrain_levels = None
+        self.curriculum.command_speed = None
+        self.curriculum.push_strength = None
         self.scene.num_envs = 64
         self.scene.env_spacing = 0
-        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.35)
+        self.commands.base_velocity.resampling_time_range = (20.0, 20.0)
+        self.commands.base_velocity.heading_command = False
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.base_velocity.rel_heading_envs = 0.0
+        self.commands.base_velocity.ranges.lin_vel_x = (0.2, 0.35)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (-0.2, 0.2)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self._apply_stability_warmup_autopilot_overrides()
         self.finalize_after_overrides()
 
     def finalize_after_overrides(self):
@@ -655,7 +1823,8 @@ class FinalProjectUnitreeH1StabilityArenaEnvCfg(FinalProjectUnitreeH1EnvCfg):
                 float(layout["suggested_start"]["z"]),
             )
         )
-        goal_x = float(layout["suggested_goal_x"])
+        overrides = _get_autopilot_override("stability_warmup")
+        goal_x = float(overrides.get("goal_x", STABILITY_WARMUP_PROXY_GOAL_X))
         _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
         _tune_shared_arena_physx_buffers_for_training(self)
         self.scene.terrain = _make_usd_terrain_cfg(CURRICULUM_ARENA_STABILITY_USD_PATH)
@@ -670,7 +1839,7 @@ class FinalProjectUnitreeH1StabilityArenaEnvCfg(FinalProjectUnitreeH1EnvCfg):
         }
         self.terminations.goal_reached = DoneTerm(
             func=custom_mdp.goal_reached,
-            params={"goal_x": goal_x},
+            params={"goal_x": goal_x, "start_x": start_pos[0]},
         )
 
 
@@ -692,7 +1861,8 @@ class FinalProjectUnitreeH1StabilityArenaEnvCfg_PLAY(FinalProjectUnitreeH1Stabil
                 float(layout["suggested_start"]["z"]),
             )
         )
-        goal_x = float(layout["suggested_goal_x"])
+        overrides = _get_autopilot_override("stability_warmup")
+        goal_x = float(overrides.get("goal_x", STABILITY_WARMUP_PROXY_GOAL_X))
         _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
         _tune_shared_arena_physx_buffers_for_play(self)
         self.scene.terrain = _make_usd_terrain_cfg(CURRICULUM_ARENA_STABILITY_USD_PATH)
@@ -707,7 +1877,7 @@ class FinalProjectUnitreeH1StabilityArenaEnvCfg_PLAY(FinalProjectUnitreeH1Stabil
         }
         self.terminations.goal_reached = DoneTerm(
             func=custom_mdp.goal_reached,
-            params={"goal_x": goal_x},
+            params={"goal_x": goal_x, "start_x": start_pos[0]},
         )
 
 
@@ -788,6 +1958,72 @@ class FinalProjectUnitreeH1CrossingArenaEnvCfg_PLAY(FinalProjectUnitreeH1Crossin
             func=custom_mdp.goal_reached,
             params={"goal_x": goal_x},
         )
+
+
+@configclass
+class FinalProjectH1RoughWalkerEnvCfg(H1RoughEnvCfg):
+    """Stage-1B warm-start: H1 rough locomotion with obs that exactly match the RoughGoal Stage-2 env.
+
+    Trains on procedural rough terrain (not the USD map) so the robot generalises across varied
+    surfaces. The observation space — including height_scan, velocity_commands and goal_distance —
+    is intentionally identical to FinalProjectUnitreeH1RoughGoalBaselineEnvCfg so that every
+    parameter layer transfers cleanly when Stage-2 resumes from this checkpoint.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.scene.robot = UNITREE_H1_MINIMAL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+        # Override height scanner to match Stage-2 geometry exactly.
+        self.scene.height_scanner = RayCasterCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/torso_link",
+            offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+            ray_alignment="yaw",
+            pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+            debug_vis=False,
+            mesh_prim_paths=["/World/ground"],
+        )
+
+        # Mirror Stage-2 observation overrides so obs dims match exactly.
+        self.observations.policy.height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            clip=(-1.0, 1.0),
+        )
+        self.observations.policy.velocity_commands = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "base_velocity"},
+        )
+        # goal_distance: use the same 13.3 m range; start_x=None resolves per env origin.
+        # This 1-dim obs will be near 1.0 at episode start and shrinks as the robot walks —
+        # even on procedural terrain it teaches the policy to read forward progress.
+        self.observations.policy.goal_distance = ObsTerm(
+            func=custom_mdp.goal_distance_x,
+            params={"goal_x": GOAL_X, "start_x": None, "normalize": True},
+        )
+
+        # Match Stage-2 action and command settings.
+        self.actions.joint_pos.scale = 0.4
+        self.commands.base_velocity.heading_command = False
+        self.commands.base_velocity.rel_heading_envs = 0.0
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.base_velocity.resampling_time_range = (10.0, 10.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.5, 1.2)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
+        self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.heading = None
+
+        self.scene.num_envs = 4096
+
+
+@configclass
+class FinalProjectH1RoughWalkerEnvCfg_PLAY(FinalProjectH1RoughWalkerEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.observations.policy.enable_corruption = False
+        self.events.push_robot = None
 
 
 def _validate_shared_map_env_cfg(num_envs: int, env_spacing: float) -> None:

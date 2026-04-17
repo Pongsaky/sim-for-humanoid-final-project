@@ -242,6 +242,60 @@ def gated_single_swing_step_reward(
     return single_swing.float() * swing_progress * stance_progress * forward_progress * alive_gate * moving_command
 
 
+def gated_early_step_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    min_air_time: float,
+    target_air_time: float,
+    min_stance_time: float,
+    min_forward_speed: float,
+    min_height: float,
+    safe_height: float,
+    min_upright: float = 0.35,
+    safe_upright: float = 0.75,
+    contact_force_threshold: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+    torso_sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+) -> torch.Tensor:
+    """Reward the first clean foot-unload event before a full swing gait exists.
+
+    This is intentionally easier than `gated_single_swing_step_reward`: it pays as
+    soon as one foot lifts briefly while the other has remained planted and the
+    robot is still moving forward in an upright posture.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset = env.scene[asset_cfg.name]
+
+    air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    unload_progress_per_foot = torch.clamp(
+        (air_time - min_air_time) / max(target_air_time - min_air_time, 1.0e-6), min=0.0, max=1.0
+    )
+    stance_progress_per_foot = torch.clamp(contact_time / max(min_stance_time, 1.0e-6), min=0.0, max=1.0)
+
+    unload_progress, unload_idx = torch.max(unload_progress_per_foot, dim=1)
+    other_idx = 1 - unload_idx
+    stance_progress = stance_progress_per_foot.gather(1, other_idx.unsqueeze(1)).squeeze(1)
+    unload_asymmetry = torch.abs(unload_progress_per_foot[:, 0] - unload_progress_per_foot[:, 1])
+    forward_progress = torch.clamp(
+        asset.data.root_lin_vel_b[:, 0] / max(min_forward_speed, 1.0e-6), min=0.0, max=1.0
+    )
+
+    alive_gate = upright_alive_gate(
+        env=env,
+        min_height=min_height,
+        safe_height=safe_height,
+        min_upright=min_upright,
+        safe_upright=safe_upright,
+        contact_force_threshold=contact_force_threshold,
+        asset_cfg=asset_cfg,
+        sensor_cfg=torso_sensor_cfg,
+    )
+    moving_command = (torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.05).float()
+    return unload_progress * stance_progress * unload_asymmetry * forward_progress * alive_gate * moving_command
+
+
 def gated_forward_speed(
     env: ManagerBasedRLEnv,
     min_height: float,
@@ -303,6 +357,103 @@ def gated_track_lin_vel_xy_command(
         sensor_cfg=sensor_cfg,
     )
     return track_reward * alive_gate
+
+
+def stand_up_height_reward(
+    env: ManagerBasedRLEnv,
+    min_height: float,
+    target_height: float,
+    min_upright: float = 0.3,
+    safe_upright: float = 0.75,
+    contact_force_threshold: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+) -> torch.Tensor:
+    """Reward recovering into a walking-height posture without paying for collapse.
+
+    Unlike the low-height penalty, this is a positive shaped reward that helps the
+    policy stand back up before a full gait exists.
+    """
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    height_progress = torch.clamp(
+        (asset.data.root_pos_w[:, 2] - min_height) / max(target_height - min_height, 1.0e-6),
+        min=0.0,
+        max=1.0,
+    )
+    uprightness = -asset.data.projected_gravity_b[:, 2]
+    upright_progress = torch.clamp(
+        (uprightness - min_upright) / max(safe_upright - min_upright, 1.0e-6),
+        min=0.0,
+        max=1.0,
+    )
+
+    net_contact_forces = contact_sensor.data.net_forces_w_history
+    torso_contact = torch.max(torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0]
+    torso_contact = torch.any(torso_contact > contact_force_threshold, dim=1)
+    contact_gate = (~torso_contact).float()
+
+    return height_progress * upright_progress * contact_gate
+
+
+def stance_leg_extension_reward(
+    env: ManagerBasedRLEnv,
+    target_hip_pitch: float,
+    target_knee: float,
+    target_ankle: float,
+    posture_sigma: float,
+    stance_contact_time: float,
+    min_height: float,
+    safe_height: float,
+    min_upright: float = 0.3,
+    safe_upright: float = 0.75,
+    contact_force_threshold: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    hip_cfg: SceneEntityCfg = SceneEntityCfg("robot", joint_names=".*_hip_pitch"),
+    knee_cfg: SceneEntityCfg = SceneEntityCfg("robot", joint_names=".*_knee"),
+    ankle_cfg: SceneEntityCfg = SceneEntityCfg("robot", joint_names=".*_ankle"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+    torso_sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+) -> torch.Tensor:
+    """Reward keeping at least one planted leg close to the nominal standing posture.
+
+    The curriculum already found stepping. The remaining failure mode is a crouched
+    low-height posture that survives without torso contact. This term biases the
+    supporting leg back toward the default H1 stance without making both legs stay
+    frozen at the target during swing.
+    """
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    hip_pos = asset.data.joint_pos[:, hip_cfg.joint_ids]
+    knee_pos = asset.data.joint_pos[:, knee_cfg.joint_ids]
+    ankle_pos = asset.data.joint_pos[:, ankle_cfg.joint_ids]
+
+    hip_error = torch.square(hip_pos - target_hip_pitch)
+    knee_error = torch.square(knee_pos - target_knee)
+    ankle_error = torch.square(ankle_pos - target_ankle)
+    per_leg_error = hip_error + knee_error + ankle_error
+    per_leg_score = torch.exp(-per_leg_error / max(posture_sigma * posture_sigma, 1.0e-6))
+
+    contact_progress = torch.clamp(
+        contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] / max(stance_contact_time, 1.0e-6),
+        min=0.0,
+        max=1.0,
+    )
+    supporting_leg_score = torch.max(per_leg_score * contact_progress, dim=1).values
+
+    alive_gate = upright_alive_gate(
+        env=env,
+        min_height=min_height,
+        safe_height=safe_height,
+        min_upright=min_upright,
+        safe_upright=safe_upright,
+        contact_force_threshold=contact_force_threshold,
+        asset_cfg=asset_cfg,
+        sensor_cfg=torso_sensor_cfg,
+    )
+    return supporting_leg_score * alive_gate
 
 
 def upright_survival_reward(
@@ -392,6 +543,74 @@ def time_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Return the control-step duration so a unit negative weight becomes a time cost."""
     step_dt = float(getattr(env, "step_dt", 1.0))
     return torch.full((env.num_envs,), step_dt, device=env.device, dtype=torch.float32)
+
+
+def time_remaining_goal_bonus(
+    env: ManagerBasedRLEnv,
+    goal_x: float,
+    start_x: float | None = None,
+    base_bonus: float = 200.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """One-step bonus on crossing the goal line, scaled by remaining episode time fraction.
+
+    Pays base_bonus at step 1 and 0 at the last step, creating a direct gradient toward
+    reaching the goal faster rather than only penalizing slow attempts via time_cost.
+    """
+    asset = env.scene[asset_cfg.name]
+    if start_x is None:
+        goal_line_x = env.scene.env_origins[:, 0] + goal_x
+    else:
+        goal_line_x = torch.full_like(asset.data.root_pos_w[:, 0], float(start_x + goal_x))
+    reached = asset.data.root_pos_w[:, 0] >= goal_line_x
+
+    max_steps = float(getattr(env, "max_episode_length", 1))
+    current_steps = env.episode_length_buf.float()
+    time_remaining_fraction = torch.clamp(1.0 - current_steps / max_steps, min=0.0, max=1.0)
+    return reached.float() * base_bonus * time_remaining_fraction
+
+
+def speed_gated_goal_progress_delta(
+    env: ManagerBasedRLEnv,
+    goal_x: float,
+    min_forward_speed: float,
+    start_x: float | None = None,
+    normalize_by_goal: bool = True,
+    min_height: float = 0.42,
+    safe_height: float = 0.70,
+    min_upright: float = 0.30,
+    safe_upright: float = 0.80,
+    contact_force_threshold: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+) -> torch.Tensor:
+    """Goal progress gated on uprightness AND minimum forward body-frame speed.
+
+    Blocks both fall-forward (not upright) and slow-shuffle (below min_forward_speed)
+    exploits, pushing the policy toward genuinely fast upright locomotion.
+    """
+    progress = goal_progress_delta(
+        env=env,
+        goal_x=goal_x,
+        start_x=start_x,
+        normalize_by_goal=normalize_by_goal,
+        asset_cfg=asset_cfg,
+    )
+    alive_gate = upright_alive_gate(
+        env=env,
+        min_height=min_height,
+        safe_height=safe_height,
+        min_upright=min_upright,
+        safe_upright=safe_upright,
+        contact_force_threshold=contact_force_threshold,
+        asset_cfg=asset_cfg,
+        sensor_cfg=sensor_cfg,
+    )
+    asset = env.scene[asset_cfg.name]
+    speed_gate = torch.clamp(
+        asset.data.root_lin_vel_b[:, 0] / max(min_forward_speed, 1.0e-6), min=0.0, max=1.0
+    )
+    return progress * alive_gate * speed_gate
 
 
 def zone_crossing_bonus(
