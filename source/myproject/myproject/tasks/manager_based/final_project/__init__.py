@@ -23,26 +23,6 @@ gym.register(
 )
 
 gym.register(
-    id="Template-Final-Project-Unitree-H1-Map-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1MapEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1MapPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Template-Final-Project-Unitree-H1-Map-Play-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1MapEnvCfg_PLAY",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1MapPPORunnerCfg",
-    },
-)
-
-gym.register(
     id="Template-Final-Project-Unitree-H1-Baseline-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
@@ -123,71 +103,11 @@ gym.register(
 )
 
 gym.register(
-    id="Template-Final-Project-Unitree-H1-Minimal-Reward-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1MinimalRewardEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1MinimalRewardPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Template-Final-Project-Unitree-H1-Minimal-Reward-Play-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1MinimalRewardEnvCfg_PLAY",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1MinimalRewardPPORunnerCfg",
-    },
-)
-
-gym.register(
     id="Template-Final-Project-Unitree-H1-Stability-Arena-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1StabilityArenaEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1StabilityWarmupPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Template-Final-Project-Unitree-H1-Rough-Warmup-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectH1RoughWalkerEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectH1RoughWalkerPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Template-Final-Project-Unitree-H1-Rough-Warmup-Play-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectH1RoughWalkerEnvCfg_PLAY",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectH1RoughWalkerPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Template-Final-Project-Unitree-H1-Flat-Warmup-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": "isaaclab_tasks.manager_based.locomotion.velocity.config.h1.flat_env_cfg:H1FlatEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectH1FlatWalkerPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Template-Final-Project-Unitree-H1-Flat-Warmup-Play-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": "isaaclab_tasks.manager_based.locomotion.velocity.config.h1.flat_env_cfg:H1FlatEnvCfg_PLAY",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1StabilityWarmupPPORunnerCfg",
     },
 )

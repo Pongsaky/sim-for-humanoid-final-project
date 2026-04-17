@@ -95,31 +95,6 @@ class FinalProjectUnitreeH1PPORunnerCfg(RslRlOnPolicyRunnerCfg):
 
 
 @configclass
-class FinalProjectUnitreeH1MapPPORunnerCfg(FinalProjectUnitreeH1PPORunnerCfg):
-    num_steps_per_env = 32
-    max_iterations = 2500
-    save_interval = 50
-    experiment_name = "final_project_unitree_h1_map_finetune"
-    run_name = ""
-    resume = False
-
-    algorithm = RslRlPpoAlgorithmCfg(
-        value_loss_coef=1.0,
-        use_clipped_value_loss=True,
-        clip_param=0.2,
-        entropy_coef=0.005,
-        num_learning_epochs=5,
-        num_mini_batches=4,
-        learning_rate=5.0e-5,
-        schedule="adaptive",
-        gamma=0.99,
-        lam=0.95,
-        desired_kl=0.01,
-        max_grad_norm=1.0,
-    )
-
-
-@configclass
 class FinalProjectUnitreeH1BaselinePPORunnerCfg(H1FlatPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
@@ -166,46 +141,6 @@ class FinalProjectUnitreeH1StabilityWarmupPPORunnerCfg(FinalProjectUnitreeH1Base
 
 
 @configclass
-class FinalProjectH1RoughWalkerPPORunnerCfg(H1RoughPPORunnerCfg):
-    """Stage-1B warm-start PPO runner.
-
-    Uses stock H1 rough exploration params (noise=1.0, entropy=0.01, lr=1e-3) and explicitly
-    enables obs normalisation to match Stage-2, so the running-mean state transfers too.
-    """
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.max_iterations = 3000
-        self.save_interval = 50
-        self.experiment_name = "final_project_unitree_h1_rough_warmup"
-        self.run_name = ""
-        # Enable obs normalisation to match Stage-2 FinalProjectUnitreeH1RoughGoalBaselinePPORunnerCfg.
-        self.policy = RslRlPpoActorCriticCfg(
-            init_noise_std=1.0,
-            noise_std_type="scalar",
-            actor_obs_normalization=True,
-            critic_obs_normalization=True,
-            actor_hidden_dims=[512, 256, 128],
-            critic_hidden_dims=[512, 256, 128],
-            activation="elu",
-        )
-        # Keep all other stock H1 rough algorithm params: entropy=0.01, lr=1e-3, kl=0.01
-
-
-@configclass
-class FinalProjectH1FlatWalkerPPORunnerCfg(H1FlatPPORunnerCfg):
-    """Stock H1 flat locomotion config used as Stage-1 warm-start for the goal task."""
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.max_iterations = 3000
-        self.experiment_name = "final_project_unitree_h1_flat_warmup"
-        # Intentionally keep all stock H1 defaults:
-        #   init_noise_std=1.0, entropy_coef=0.01, lr=1e-3, desired_kl=0.01
-        # The project's custom configs used values 4–200x too conservative, preventing walking.
-
-
-@configclass
 class FinalProjectUnitreeH1RoughGoalBaselinePPORunnerCfg(H1RoughPPORunnerCfg):
     """Stage-2 goal fine-tune: stock H1 exploration params.
 
@@ -222,8 +157,8 @@ class FinalProjectUnitreeH1RoughGoalBaselinePPORunnerCfg(H1RoughPPORunnerCfg):
         self.run_name = ""
         # Set resume=True and --load_experiment final_project_unitree_h1_rough_warmup on CLI for Option B.
         self.resume = False
-        self.load_run = "2026-04-17_12-29-19"
-        self.load_checkpoint = "model_5058.pt"
+        self.load_run = ".*"
+        self.load_checkpoint = "model_.*.pt"
         self.policy = RslRlPpoActorCriticCfg(
             init_noise_std=0.5,
             noise_std_type="scalar",
@@ -247,14 +182,6 @@ class FinalProjectUnitreeH1RoughGoalBaselinePPORunnerCfg(H1RoughPPORunnerCfg):
             desired_kl=0.01,
             max_grad_norm=1.0,
         )
-
-
-@configclass
-class FinalProjectUnitreeH1MinimalRewardPPORunnerCfg(FinalProjectUnitreeH1BaselinePPORunnerCfg):
-    def __post_init__(self):
-        super().__post_init__()
-        self.experiment_name = "final_project_unitree_h1_minimal_reward"
-        _apply_runner_override(self, "minimal_reward")
 
 
 @configclass

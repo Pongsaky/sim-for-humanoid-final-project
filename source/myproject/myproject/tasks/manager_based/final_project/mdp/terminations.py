@@ -56,6 +56,19 @@ def goal_reached_upright(
     return crossed_goal & tall_enough & upright_enough & ~torso_contact
 
 
+def out_of_bounds(
+    env: ManagerBasedRLEnv,
+    x_bounds: tuple[float, float] = (-7.6, 7.6),
+    y_bounds: tuple[float, float] = (-3.85, 3.85),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Terminate when the robot leaves the map boundary."""
+    asset = env.scene[asset_cfg.name]
+    x = asset.data.root_pos_w[:, 0]
+    y = asset.data.root_pos_w[:, 1]
+    return (x < x_bounds[0]) | (x > x_bounds[1]) | (y < y_bounds[0]) | (y > y_bounds[1])
+
+
 def bad_orientation_safe(
     env: ManagerBasedRLEnv,
     limit_angle: float,
