@@ -225,6 +225,101 @@ def _install_training_diagnostics(runner) -> None:
     runner.alg.update = MethodType(guarded_update, runner.alg)
 
 
+def _load_checkpoint_with_shape_filter(runner, checkpoint_path: str) -> bool:
+    """Load a checkpoint, falling back to shape-compatible tensors when needed.
+
+    Returns:
+        True if the checkpoint was loaded strictly (full resume), False if shape-filter
+        fallback was used (transfer load).
+    """
+
+    try:
+        runner.load(checkpoint_path)
+        return True
+    except RuntimeError as exc:
+        if "size mismatch" not in str(exc):
+            raise
+
+    print("[WARN] Strict checkpoint load failed due to shape mismatch. Falling back to compatible tensors only.")
+    loaded_dict = torch.load(checkpoint_path, map_location=runner.device)
+    current_state = runner.alg.policy.state_dict()
+    checkpoint_state = loaded_dict["model_state_dict"]
+
+    compatible_state = {}
+    skipped_keys: list[str] = []
+    for key, value in checkpoint_state.items():
+        current_value = current_state.get(key)
+        if current_value is None or current_value.shape != value.shape:
+            skipped_keys.append(key)
+            continue
+        compatible_state[key] = value
+
+    if not compatible_state:
+        raise RuntimeError(f"No compatible policy tensors found in checkpoint: {checkpoint_path}")
+
+    current_state.update(compatible_state)
+    runner.alg.policy.load_state_dict(current_state, strict=False)
+
+    if "iter" in loaded_dict:
+        runner.current_learning_iteration = int(loaded_dict["iter"])
+    infos = loaded_dict.get("infos") or {}
+    if infos:
+        runner.git_status_repos = infos.get("git_status_repos", runner.git_status_repos)
+
+    if hasattr(runner.alg, "optimizer") and "optimizer_state_dict" in loaded_dict:
+        print("[INFO] Skipping optimizer state restore for transfer checkpoint.")
+
+    preview = ", ".join(skipped_keys[:8])
+    if len(skipped_keys) > 8:
+        preview += ", ..."
+    print(
+        f"[INFO] Loaded {len(compatible_state)} compatible tensors from transfer checkpoint; "
+        f"skipped {len(skipped_keys)} incompatible tensors."
+    )
+    if skipped_keys:
+        print(f"[INFO] Skipped checkpoint tensors: {preview}")
+
+    return False
+
+
+def _apply_resume_policy_overrides(runner, agent_cfg, is_strict_resume: bool = False) -> None:
+    """Re-apply profile-driven optimizer and exploration settings after checkpoint load.
+
+    Args:
+        is_strict_resume: True when the checkpoint was loaded strictly (full resume of the same
+            architecture). In this case the trained noise_std is preserved from the checkpoint.
+            False when a shape-filter transfer was used, meaning the noise_std should be reset to
+            the configured init value so exploration restarts from a known level.
+    """
+
+    if hasattr(runner.alg, "optimizer") and not is_strict_resume:
+        # For strict resumes, preserve the adapted LR from the checkpoint's optimizer state.
+        # Resetting LR to config value after adaptive scheduling has tuned it can cause
+        # one-shot policy collapse on the first gradient update.
+        for group in runner.alg.optimizer.param_groups:
+            group["lr"] = float(agent_cfg.algorithm.learning_rate)
+    elif hasattr(runner.alg, "optimizer") and is_strict_resume:
+        # rsl_rl's adaptive PPO overwrites param_groups['lr'] with self.alg.learning_rate on
+        # every update (see rsl_rl ppo.py update()). self.alg.learning_rate is not in the
+        # checkpoint — it is initialised from agent_cfg.algorithm.learning_rate. So unless we
+        # sync it here, the first update clobbers the restored optimizer LR and a converged
+        # policy collapses. Pull the adapted LR from the restored optimizer state.
+        restored_lr = float(runner.alg.optimizer.param_groups[0]["lr"])
+        runner.alg.learning_rate = restored_lr
+        print(f"[INFO] Synced alg.learning_rate to restored optimizer LR: {restored_lr:.3e}")
+
+    policy = runner.alg.policy
+    target_std = getattr(agent_cfg.policy, "init_noise_std", None)
+    if target_std is None or is_strict_resume:
+        # For strict resumes, preserve the trained noise_std from the checkpoint.
+        return
+
+    target_std = float(target_std)
+    if hasattr(policy, "log_std"):
+        policy.log_std.data.fill_(torch.log(torch.tensor(target_std, device=policy.log_std.device)))
+    elif hasattr(policy, "std"):
+        policy.std.data.fill_(target_std)
+
 def _tensor_to_float(value) -> float | None:
     """Convert scalars/tensors to a JSON-safe float when possible."""
 
@@ -708,7 +803,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
-        runner.load(resume_path)
+        is_strict_resume = _load_checkpoint_with_shape_filter(runner, resume_path)
+        _apply_resume_policy_overrides(runner, agent_cfg, is_strict_resume=is_strict_resume)
+        # Diagnostic: confirm post-load policy state
+        policy = runner.alg.policy
+        _noise_val = None
+        if hasattr(policy, "std"):
+            _noise_val = float(policy.std.data.mean().item())
+        elif hasattr(policy, "log_std"):
+            _noise_val = float(policy.log_std.data.exp().mean().item())
+        _iter_val = int(runner.current_learning_iteration)
+        _noise_str = f"{_noise_val:.4f}" if _noise_val is not None else "n/a"
+        print(f"[INFO] Post-load state: strict={is_strict_resume}, iter={_iter_val}, noise_std={_noise_str}")
+        if hasattr(policy, "actor_obs_normalizer") and hasattr(policy.actor_obs_normalizer, "count"):
+            print(f"[INFO] Obs normalizer count={int(policy.actor_obs_normalizer.count.item())}")
 
     _ensure_module_parameters_finite(runner.alg.policy, "policy")
     if hasattr(runner.alg.policy, "log_std"):
@@ -782,6 +890,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         restore_signal_handlers()
         env.close()
 
+    if deferred_shutdown_eval is None:
+        shutdown_summary["finished_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        _write_run_summary(log_dir, shutdown_summary)
+        _append_results_entry(shutdown_summary)
+
     simulation_app.close()
     if deferred_shutdown_eval is not None:
         result = _run_shutdown_eval(
@@ -799,9 +912,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         )
         deferred_shutdown_eval["shutdown_summary"]["finished_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
         _write_run_summary(deferred_shutdown_eval["log_dir"], deferred_shutdown_eval["shutdown_summary"])
-    else:
-        shutdown_summary["finished_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
-        _write_run_summary(log_dir, shutdown_summary)
+        _append_results_entry(deferred_shutdown_eval["shutdown_summary"])
 
 
 if __name__ == "__main__":
