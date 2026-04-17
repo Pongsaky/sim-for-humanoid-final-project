@@ -225,6 +225,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     obs = env.get_observations()
     timestep = 0
     episode_metric_values: dict[str, list[float]] = defaultdict(list)
+    completion_times: list[float] = []
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -246,6 +247,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     scalar = _scalarize(value)
                     if scalar is not None:
                         episode_metric_values[key].append(scalar)
+            # Collect per-episode goal completion times written by completion_time_metric.
+            for t in extras.get("completion_times_s", []):
+                completion_times.append(float(t))
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
@@ -262,6 +266,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
 
+    if completion_times:
+        print(
+            f"[Completion Time] n={len(completion_times)}"
+            f"  best={min(completion_times):.2f}s"
+            f"  mean={sum(completion_times)/len(completion_times):.2f}s"
+            f"  worst={max(completion_times):.2f}s"
+        )
+
     if args_cli.summary_json:
         summary = {
             "task": args_cli.task,
@@ -272,6 +284,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 key: float(sum(values) / len(values)) for key, values in episode_metric_values.items() if values
             },
         }
+        if completion_times:
+            summary["completion_time_s"] = {
+                "best": float(min(completion_times)),
+                "mean": float(sum(completion_times) / len(completion_times)),
+                "worst": float(max(completion_times)),
+                "n": len(completion_times),
+            }
         with open(args_cli.summary_json, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, sort_keys=True)
 

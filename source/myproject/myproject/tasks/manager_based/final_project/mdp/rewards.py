@@ -545,6 +545,33 @@ def time_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
     return torch.full((env.num_envs,), step_dt, device=env.device, dtype=torch.float32)
 
 
+def completion_time_metric(
+    env: ManagerBasedRLEnv,
+    goal_x: float,
+    start_x: float | None = None,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Zero-reward metric: records elapsed seconds for each env that crosses the goal this step.
+
+    Writes a fresh list to env.extras["completion_times_s"] every step so the play script
+    can read and accumulate per-episode completion times without reward-manager normalization.
+    Must use a non-zero weight so the reward manager does not skip the call.
+    """
+    asset = env.scene[asset_cfg.name]
+    if start_x is None:
+        goal_line_x = env.scene.env_origins[:, 0] + goal_x
+    else:
+        goal_line_x = torch.full_like(asset.data.root_pos_w[:, 0], float(start_x + goal_x))
+
+    reached = asset.data.root_pos_w[:, 0] >= goal_line_x
+    step_dt = float(getattr(env, "step_dt", 1.0))
+    # Reset every step so stale values from previous steps are never re-read.
+    env.extras["completion_times_s"] = (
+        (env.episode_length_buf[reached].float() * step_dt).tolist() if reached.any() else []
+    )
+    return torch.zeros(env.num_envs, device=env.device, dtype=torch.float32)
+
+
 def time_remaining_goal_bonus(
     env: ManagerBasedRLEnv,
     goal_x: float,

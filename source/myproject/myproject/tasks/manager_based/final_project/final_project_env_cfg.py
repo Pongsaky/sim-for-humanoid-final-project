@@ -394,6 +394,11 @@ class FinalProjectBaselineRewards(H1Rewards):
             "asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_link"),
         },
     )
+    completion_time_metric = RewTerm(
+        func=custom_mdp.completion_time_metric,
+        weight=1.0,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0]},
+    )
 
 
 @configclass
@@ -531,6 +536,11 @@ class FinalProjectRoughGoalBaselineRewards(H1Rewards):
         weight=200.0,
         params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "bonus": 1.0},
     )
+    completion_time_metric = RewTerm(
+        func=custom_mdp.completion_time_metric,
+        weight=1.0,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0]},
+    )
 
 
 @configclass
@@ -562,6 +572,11 @@ class FinalProjectSpeedRunRewards(H1Rewards):
         func=custom_mdp.forward_velocity_toward_goal,
         weight=0.3,
         params={"goal_x": GOAL_X},
+    )
+    completion_time_metric = RewTerm(
+        func=custom_mdp.completion_time_metric,
+        weight=1.0,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0]},
     )
 
 
@@ -600,6 +615,11 @@ class FinalProjectFastWalkRewards(H1Rewards):
         func=custom_mdp.time_remaining_goal_bonus,
         weight=1.0,
         params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "base_bonus": 500.0},
+    )
+    completion_time_metric = RewTerm(
+        func=custom_mdp.completion_time_metric,
+        weight=1.0,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0]},
     )
 
 
