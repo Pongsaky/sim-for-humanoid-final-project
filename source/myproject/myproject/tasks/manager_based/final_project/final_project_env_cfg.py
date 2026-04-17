@@ -41,13 +41,14 @@ CURRICULUM_ARENA_CROSSING_LAYOUT_PATH = str(_CURRICULUM_ARENA_DIR / "crossing_ar
 REAL_MAP_SIZE_XY = (15.2, 7.7)
 REAL_MAP_BOUNDS_X = (-REAL_MAP_SIZE_XY[0] / 2, REAL_MAP_SIZE_XY[0] / 2)  # (-7.6, 7.6)
 REAL_MAP_BOUNDS_Y = (-REAL_MAP_SIZE_XY[1] / 2, REAL_MAP_SIZE_XY[1] / 2)  # (-3.85, 3.85)
-GOAL_X = 6.8
 MAP_ENV_SPACING = 0
 SPAWN_Z_CLEARANCE = 0.08
 MAP_START_POS = (-6.5, 0, 1.05 + SPAWN_Z_CLEARANCE)
 MAP_START_ROT = (1.0, 0.0, 0.0, 0.0)
 MAP_START_POS_JITTER_XY = (0.3, 0.5)
 CURRICULUM_ARENA_START_POS_JITTER_XY = (0.4, 0.4)
+# Full map traversal: spawn at MAP_START_POS[0], goal 0.3 m inside the right boundary.
+GOAL_X = REAL_MAP_BOUNDS_X[1] - MAP_START_POS[0] - 0.3  # 7.6 - (-6.5) - 0.3 = 13.8
 BASELINE_GOAL_PROGRESS_WEIGHT = 4.0
 BASELINE_FEET_AIR_TIME_WEIGHT = 4.0
 BASELINE_FEET_AIR_TIME_MIN = 0.04
@@ -62,10 +63,10 @@ CURRICULUM_FEET_AIR_TIME_WEIGHT = 18.0
 CURRICULUM_TRACK_LIN_VEL_WEIGHT = 0.015
 CURRICULUM_UPRIGHT_SURVIVAL_WEIGHT = 1.5
 CURRICULUM_STAND_UP_HEIGHT_WEIGHT = 4.0
+BASELINE_GOAL_REACHED_BONUS_WEIGHT = 40.0
 ROUGH_GOAL_BASELINE_TRACK_ANG_VEL_WEIGHT = 0.25
 ROUGH_GOAL_BASELINE_TERMINATION_PENALTY = -25.0
 ROUGH_GOAL_BASELINE_GOAL_PROGRESS_WEIGHT = 2.0
-ROUGH_GOAL_BASELINE_GOAL_REACHED_BONUS_WEIGHT = 50.0
 ROUGH_GOAL_BASELINE_LIN_VEL_X_RANGE = (0.25, 0.5)
 SPEEDRUN_LIN_VEL_X_RANGE = (1.0, 1.5)
 SPEEDRUN_TERMINATION_PENALTY = -5.0
@@ -940,7 +941,7 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
         self.rewards.goal_progress.weight = BASELINE_GOAL_PROGRESS_WEIGHT
         self.rewards.goal_progress.params["normalize_by_goal"] = False
         self.rewards.track_lin_vel_xy_exp.weight = BASELINE_TRACK_LIN_VEL_WEIGHT
-        self.rewards.goal_reached_bonus.weight = 40.0
+        self.rewards.goal_reached_bonus.weight = BASELINE_GOAL_REACHED_BONUS_WEIGHT
         self.rewards.stand_up_height.weight = 0.0
         self.rewards.stand_up_height.params = {
             "min_height": 0.46,
@@ -1004,9 +1005,10 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
             )
         if self.rewards.goal_progress.params.get("normalize_by_goal") is not False:
             raise ValueError("Baseline goal_progress must use raw per-step x-delta.")
-        if self.rewards.goal_reached_bonus.weight != 40.0:
+        if self.rewards.goal_reached_bonus.weight != BASELINE_GOAL_REACHED_BONUS_WEIGHT:
             raise ValueError(
-                f"Baseline goal_reached_bonus weight={self.rewards.goal_reached_bonus.weight} expected 40.0."
+                f"Baseline goal_reached_bonus weight={self.rewards.goal_reached_bonus.weight} "
+                f"expected {BASELINE_GOAL_REACHED_BONUS_WEIGHT}."
             )
         if self.rewards.upright_survival.weight != 0.75:
             raise ValueError(
@@ -1168,12 +1170,14 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
         self.scene.num_envs = 64
         self.scene.env_spacing = MAP_ENV_SPACING
         self.actions.joint_pos.scale = 0.4
+        # At lin_vel_x=(0.35, 0.6) m/s, crossing GOAL_X=13.8 m takes 23-39 s.
+        self.episode_length_s = 45.0
         self.commands.base_velocity.heading_command = False
         self.commands.base_velocity.rel_heading_envs = 0.0
         self.commands.base_velocity.rel_standing_envs = 0.0
         # Keep each episode on one forward command so completion pressure lines
         # up with the first-passage objective instead of switching targets mid-run.
-        self.commands.base_velocity.resampling_time_range = (20.0, 20.0)
+        self.commands.base_velocity.resampling_time_range = (45.0, 45.0)
         self.commands.base_velocity.ranges.lin_vel_x = (0.35, 0.6)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
         self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
@@ -1200,7 +1204,7 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
             func=custom_mdp.out_of_bounds,
             params={"x_bounds": REAL_MAP_BOUNDS_X, "y_bounds": REAL_MAP_BOUNDS_Y},
         )
-        if self.commands.base_velocity.resampling_time_range != (20.0, 20.0):
+        if self.commands.base_velocity.resampling_time_range != (self.episode_length_s, self.episode_length_s):
             raise ValueError(
                 "Baseline base_velocity resampling_time_range was overridden unexpectedly. "
                 f"Got {self.commands.base_velocity.resampling_time_range}."
@@ -1321,7 +1325,8 @@ class FinalProjectUnitreeH1RoughGoalBaselineEnvCfg(H1RoughEnvCfg):
             params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "normalize": True},
         )
         self.events.reset_robot_joints.params["position_range"] = (0.95, 1.05)
-        self.episode_length_s = 20.0
+        # At lin_vel_x=(0.8, 1.2) m/s, crossing GOAL_X=13.8 m takes up to 17 s.
+        self.episode_length_s = 30.0
         self.terminations.goal_reached = DoneTerm(
             func=custom_mdp.goal_reached,
             params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0]},
