@@ -8,7 +8,15 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import json
+import os
+import signal
+import statistics
+import subprocess
 import sys
+from math import isfinite
+from pathlib import Path
+from types import MethodType
 
 from isaaclab.app import AppLauncher
 
@@ -20,6 +28,30 @@ parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
+parser.add_argument(
+    "--shutdown-eval",
+    action="store_true",
+    default=False,
+    help="After graceful shutdown, run a short headless evaluation from the saved shutdown checkpoint.",
+)
+parser.add_argument(
+    "--shutdown-video",
+    action="store_true",
+    default=False,
+    help="Record a video during the post-shutdown evaluation run.",
+)
+parser.add_argument(
+    "--shutdown-video-length",
+    type=int,
+    default=300,
+    help="Video length in steps for the post-shutdown evaluation run.",
+)
+parser.add_argument(
+    "--shutdown-eval-steps",
+    type=int,
+    default=300,
+    help="Maximum number of steps for the post-shutdown evaluation run.",
+)
 parser.add_argument(
     "--num_envs", "--num_env", dest="num_envs", type=int, default=None, help="Number of environments to simulate."
 )
@@ -78,10 +110,8 @@ if version.parse(installed_version) < version.parse(RSL_RL_VERSION):
 """Rest everything follows."""
 
 import logging
-import os
 import time
 from datetime import datetime
-from types import MethodType
 
 import gymnasium as gym
 import torch
@@ -112,6 +142,10 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
+
+
+class _GracefulShutdownRequested(RuntimeError):
+    """Raised at a safe iteration boundary after a shutdown signal is received."""
 
 
 def _ensure_tensor_finite(name: str, tensor: torch.Tensor, iteration: int | None = None) -> None:
@@ -189,6 +223,464 @@ def _install_training_diagnostics(runner) -> None:
 
     policy._update_distribution = MethodType(guarded_update_distribution, policy)
     runner.alg.update = MethodType(guarded_update, runner.alg)
+
+
+def _load_checkpoint_with_shape_filter(runner, checkpoint_path: str) -> bool:
+    """Load a checkpoint, falling back to shape-compatible tensors when needed.
+
+    Returns:
+        True if the checkpoint was loaded strictly (full resume), False if shape-filter
+        fallback was used (transfer load).
+    """
+
+    try:
+        runner.load(checkpoint_path)
+        return True
+    except RuntimeError as exc:
+        if "size mismatch" not in str(exc):
+            raise
+
+    print("[WARN] Strict checkpoint load failed due to shape mismatch. Falling back to compatible tensors only.")
+    loaded_dict = torch.load(checkpoint_path, map_location=runner.device)
+    current_state = runner.alg.policy.state_dict()
+    checkpoint_state = loaded_dict["model_state_dict"]
+
+    compatible_state = {}
+    skipped_keys: list[str] = []
+    for key, value in checkpoint_state.items():
+        current_value = current_state.get(key)
+        if current_value is None or current_value.shape != value.shape:
+            skipped_keys.append(key)
+            continue
+        compatible_state[key] = value
+
+    if not compatible_state:
+        raise RuntimeError(f"No compatible policy tensors found in checkpoint: {checkpoint_path}")
+
+    current_state.update(compatible_state)
+    runner.alg.policy.load_state_dict(current_state, strict=False)
+
+    if "iter" in loaded_dict:
+        runner.current_learning_iteration = int(loaded_dict["iter"])
+    infos = loaded_dict.get("infos") or {}
+    if infos:
+        runner.git_status_repos = infos.get("git_status_repos", runner.git_status_repos)
+
+    if hasattr(runner.alg, "optimizer") and "optimizer_state_dict" in loaded_dict:
+        print("[INFO] Skipping optimizer state restore for transfer checkpoint.")
+
+    preview = ", ".join(skipped_keys[:8])
+    if len(skipped_keys) > 8:
+        preview += ", ..."
+    print(
+        f"[INFO] Loaded {len(compatible_state)} compatible tensors from transfer checkpoint; "
+        f"skipped {len(skipped_keys)} incompatible tensors."
+    )
+    if skipped_keys:
+        print(f"[INFO] Skipped checkpoint tensors: {preview}")
+
+    return False
+
+
+def _apply_resume_policy_overrides(runner, agent_cfg, is_strict_resume: bool = False) -> None:
+    """Re-apply profile-driven optimizer and exploration settings after checkpoint load.
+
+    Args:
+        is_strict_resume: True when the checkpoint was loaded strictly (full resume of the same
+            architecture). In this case the trained noise_std is preserved from the checkpoint.
+            False when a shape-filter transfer was used, meaning the noise_std should be reset to
+            the configured init value so exploration restarts from a known level.
+    """
+
+    if hasattr(runner.alg, "optimizer") and not is_strict_resume:
+        # For strict resumes, preserve the adapted LR from the checkpoint's optimizer state.
+        # Resetting LR to config value after adaptive scheduling has tuned it can cause
+        # one-shot policy collapse on the first gradient update.
+        for group in runner.alg.optimizer.param_groups:
+            group["lr"] = float(agent_cfg.algorithm.learning_rate)
+    elif hasattr(runner.alg, "optimizer") and is_strict_resume:
+        # rsl_rl's adaptive PPO overwrites param_groups['lr'] with self.alg.learning_rate on
+        # every update (see rsl_rl ppo.py update()). self.alg.learning_rate is not in the
+        # checkpoint — it is initialised from agent_cfg.algorithm.learning_rate. So unless we
+        # sync it here, the first update clobbers the restored optimizer LR and a converged
+        # policy collapses. Pull the adapted LR from the restored optimizer state.
+        restored_lr = float(runner.alg.optimizer.param_groups[0]["lr"])
+        runner.alg.learning_rate = restored_lr
+        print(f"[INFO] Synced alg.learning_rate to restored optimizer LR: {restored_lr:.3e}")
+
+    policy = runner.alg.policy
+    target_std = getattr(agent_cfg.policy, "init_noise_std", None)
+    if target_std is None or is_strict_resume:
+        # For strict resumes, preserve the trained noise_std from the checkpoint.
+        return
+
+    target_std = float(target_std)
+    if hasattr(policy, "log_std"):
+        policy.log_std.data.fill_(torch.log(torch.tensor(target_std, device=policy.log_std.device)))
+    elif hasattr(policy, "std"):
+        policy.std.data.fill_(target_std)
+
+def _tensor_to_float(value) -> float | None:
+    """Convert scalars/tensors to a JSON-safe float when possible."""
+
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 0:
+            return None
+        value = value.detach().float().mean().item()
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _summarize_episode_infos(ep_infos: list[dict]) -> dict[str, float]:
+    """Average episode info metrics into a compact JSON-safe dictionary."""
+
+    if not ep_infos:
+        return {}
+
+    summary: dict[str, float] = {}
+    for key in ep_infos[0]:
+        values = []
+        for ep_info in ep_infos:
+            if key not in ep_info:
+                continue
+            value = _tensor_to_float(ep_info[key])
+            if value is not None:
+                values.append(value)
+        if values:
+            summary[key] = float(sum(values) / len(values))
+    return summary
+
+
+def _build_recent_metrics_snapshot(runner, locs: dict) -> dict:
+    """Create a compact metrics snapshot from the latest completed iteration."""
+
+    snapshot = {
+        "iteration": int(locs["it"]),
+        "total_iterations": int(locs["tot_iter"]),
+        "total_timesteps": int(runner.tot_timesteps),
+        "total_time_s": float(runner.tot_time),
+        "collection_time_s": float(locs["collection_time"]),
+        "learning_time_s": float(locs["learn_time"]),
+        "policy_mean_noise_std": float(runner.alg.policy.action_std.mean().item()),
+        "losses": {key: float(value) for key, value in locs["loss_dict"].items()},
+        "episode_metrics": _summarize_episode_infos(locs["ep_infos"]),
+    }
+
+    if len(locs["rewbuffer"]) > 0:
+        snapshot["mean_reward"] = float(statistics.mean(locs["rewbuffer"]))
+        snapshot["mean_episode_length"] = float(statistics.mean(locs["lenbuffer"]))
+    return snapshot
+
+
+def _write_shutdown_summary(log_dir: str, summary: dict) -> str:
+    """Persist the shutdown metadata next to the run artifacts."""
+
+    summary_path = os.path.join(log_dir, "shutdown_summary.json")
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2, sort_keys=True)
+    _write_run_summary(log_dir, summary)
+    return summary_path
+
+
+def _write_run_summary(log_dir: str, summary: dict) -> str:
+    """Persist a generic run summary for both completed and interrupted runs."""
+
+    summary_path = os.path.join(log_dir, "run_summary.json")
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2, sort_keys=True)
+    return summary_path
+
+
+def _safe_metric(summary: dict, key: str):
+    """Read a scalar metric from the latest metrics snapshot when available."""
+
+    latest_metrics = summary.get("latest_metrics") or {}
+    episode_metrics = latest_metrics.get("episode_metrics") or {}
+    value = episode_metrics.get(key)
+    if value is None:
+        value = latest_metrics.get(key)
+    if isinstance(value, (int, float)) and isfinite(value):
+        return float(value)
+    return None
+
+
+def _format_metric(value: float | None, precision: int = 4) -> str:
+    """Render a compact numeric value for markdown output."""
+
+    if value is None:
+        return "n/a"
+    return f"{value:.{precision}f}"
+
+
+def _find_previous_run_summary(log_dir: str, experiment_name: str) -> dict | None:
+    """Locate the most recent prior summary for the same experiment."""
+
+    experiment_root = Path(log_dir).parent
+    current_run = Path(log_dir).name
+    candidate_runs = sorted(path for path in experiment_root.iterdir() if path.is_dir() and path.name != current_run)
+    for run_dir in reversed(candidate_runs):
+        for summary_name in ("run_summary.json", "shutdown_summary.json"):
+            summary_path = run_dir / summary_name
+            if not summary_path.is_file():
+                continue
+            try:
+                with summary_path.open("r", encoding="utf-8") as f:
+                    summary = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if summary.get("experiment_name") == experiment_name:
+                return summary
+    return None
+
+
+def _build_improvement_note(summary: dict, previous_summary: dict | None) -> str:
+    """Summarize the most relevant improvement signal for the run."""
+
+    goal_progress = _safe_metric(summary, "Episode_Reward/goal_progress")
+    goal_reached = _safe_metric(summary, "Episode_Termination/goal_reached")
+    base_contact = _safe_metric(summary, "Episode_Termination/base_contact")
+    mean_reward = _safe_metric(summary, "mean_reward")
+
+    if previous_summary is None:
+        if goal_reached is not None and goal_reached > 0.01:
+            return "Goal-reaching is active in this run, but the conversion rate is still too low to call the task stable."
+        if goal_progress is not None and goal_progress > 0.001:
+            return "Goal progress is alive, but the policy is still failing before it can turn that progress into reliable finishes."
+        if base_contact is not None and base_contact > 0.5:
+            return "The run is still dominated by base-contact failures, so survival remains the main bottleneck."
+        if mean_reward is not None:
+            return "This run produced a usable baseline snapshot, but it still needs a clearer task-level improvement signal."
+        return "This run created the first logged result entry for the experiment."
+
+    prev_goal_progress = _safe_metric(previous_summary, "Episode_Reward/goal_progress")
+    prev_goal_reached = _safe_metric(previous_summary, "Episode_Termination/goal_reached")
+    prev_base_contact = _safe_metric(previous_summary, "Episode_Termination/base_contact")
+    prev_mean_reward = _safe_metric(previous_summary, "mean_reward")
+
+    if (
+        goal_reached is not None
+        and prev_goal_reached is not None
+        and goal_reached > prev_goal_reached + 0.002
+    ):
+        return (
+            f"Goal completion improved ({_format_metric(prev_goal_reached)} -> {_format_metric(goal_reached)}), "
+            "which is the strongest task-level gain in this run."
+        )
+    if (
+        goal_progress is not None
+        and prev_goal_progress is not None
+        and goal_progress > prev_goal_progress + 0.0005
+    ):
+        if (
+            base_contact is not None
+            and prev_base_contact is not None
+            and base_contact < prev_base_contact - 0.05
+        ):
+            return (
+                f"Goal progress improved ({_format_metric(prev_goal_progress)} -> {_format_metric(goal_progress)}) "
+                f"while base-contact failures also dropped ({_format_metric(prev_base_contact)} -> {_format_metric(base_contact)})."
+            )
+        return (
+            f"Goal progress improved ({_format_metric(prev_goal_progress)} -> {_format_metric(goal_progress)}), "
+            "but falls are still capping the gain."
+        )
+    if (
+        base_contact is not None
+        and prev_base_contact is not None
+        and base_contact < prev_base_contact - 0.05
+    ):
+        return (
+            f"Base-contact terminations dropped ({_format_metric(prev_base_contact)} -> {_format_metric(base_contact)}), "
+            "so stability improved even though task completion is still weak."
+        )
+    if mean_reward is not None and prev_mean_reward is not None and mean_reward > prev_mean_reward + 0.02:
+        return (
+            f"Mean reward improved ({_format_metric(prev_mean_reward, 3)} -> {_format_metric(mean_reward, 3)}), "
+            "but the task terms still need a cleaner win signal."
+        )
+    return "No clear task-level improvement over the previous logged run; the current bottleneck is still the same."
+
+
+def _build_next_improvement_note(summary: dict) -> str:
+    """Suggest the next concrete improvement target from the latest metrics."""
+
+    goal_progress = _safe_metric(summary, "Episode_Reward/goal_progress")
+    goal_reached = _safe_metric(summary, "Episode_Termination/goal_reached")
+    base_contact = _safe_metric(summary, "Episode_Termination/base_contact")
+    noise_std = _safe_metric(summary, "policy_mean_noise_std")
+
+    if noise_std is not None and noise_std > 1.5:
+        return "Stabilize PPO first: reduce exploration pressure so the policy stops diffusing before more reward tuning."
+    if base_contact is not None and base_contact > 0.5:
+        return "Focus on early-stance survival: tighten reset/support shaping and verify `base_contact` drops before other reward changes."
+    if goal_progress is not None and goal_progress < 0.001:
+        return "Re-check the resolved config and reward wiring so `goal_progress` is materially alive in the run, not just enabled on paper."
+    if goal_reached is not None and goal_reached < 0.01:
+        return "Keep the dense progress reward, but strengthen the bridge from partial progress to actual goal completion."
+    return "Run a narrow ablation on the current best setup and change one bottleneck at a time so the gain stays attributable."
+
+
+def _append_results_entry(summary: dict):
+    """Append a concise experiment-level markdown entry for the finished run."""
+
+    log_dir = summary["log_dir"]
+    experiment_name = summary["experiment_name"]
+    experiment_root = Path(log_dir).parent
+    results_path = experiment_root / "RESULTS.md"
+    run_name = Path(log_dir).name
+
+    file_exists = results_path.is_file()
+    if file_exists:
+        existing_text = results_path.read_text(encoding="utf-8")
+        if f"- Run: `{run_name}`" in existing_text:
+            return
+    else:
+        existing_text = "# Results\n\n"
+
+    previous_summary = _find_previous_run_summary(log_dir, experiment_name)
+    latest_metrics = summary.get("latest_metrics") or {}
+    finished_at = summary.get("finished_at") or datetime.now().astimezone().isoformat(timespec="seconds")
+
+    status = "completed"
+    if summary.get("requested_shutdown"):
+        reason = summary.get("reason") or "requested stop"
+        status = f"stopped via {reason}"
+
+    entry_lines = [
+        f"## {run_name}",
+        f"- Finished: `{finished_at}`",
+        f"- Run: `{run_name}`",
+        f"- Task: `{summary.get('task', 'n/a')}`",
+        f"- Status: {status}",
+        (
+            "- Progress: "
+            f"{summary.get('completed_iteration', 0)} / {latest_metrics.get('total_iterations', 'n/a')} iterations, "
+            f"{summary.get('total_timesteps', 0)} timesteps"
+        ),
+        (
+            "- Snapshot: "
+            f"reward={_format_metric(_safe_metric(summary, 'mean_reward'), 3)}, "
+            f"ep_len={_format_metric(_safe_metric(summary, 'mean_episode_length'), 2)}, "
+            f"goal_progress={_format_metric(_safe_metric(summary, 'Episode_Reward/goal_progress'))}, "
+            f"goal_reached={_format_metric(_safe_metric(summary, 'Episode_Termination/goal_reached'))}, "
+            f"base_contact={_format_metric(_safe_metric(summary, 'Episode_Termination/base_contact'))}"
+        ),
+        f"- Improvement: {_build_improvement_note(summary, previous_summary)}",
+        f"- Next: {_build_next_improvement_note(summary)}",
+    ]
+    entry = "\n".join(entry_lines)
+
+    if file_exists and existing_text.rstrip():
+        new_text = existing_text.rstrip() + "\n\n---\n\n" + entry + "\n"
+    else:
+        new_text = existing_text + entry + "\n"
+    results_path.write_text(new_text, encoding="utf-8")
+
+
+def _finalize_shutdown_eval(shutdown_summary: dict, eval_result: subprocess.CompletedProcess, log_dir: str):
+    """Attach post-shutdown evaluation results and rewrite the shutdown summary."""
+
+    eval_summary_path = os.path.join(log_dir, "shutdown_eval_summary.json")
+    shutdown_summary["shutdown_eval"] = {
+        "summary_path": eval_summary_path,
+        "returncode": int(eval_result.returncode),
+        "stdout_tail": eval_result.stdout[-4000:],
+        "stderr_tail": eval_result.stderr[-4000:],
+    }
+    summary_path = _write_shutdown_summary(log_dir, shutdown_summary)
+    if eval_result.returncode != 0:
+        print("[WARN] Post-shutdown evaluation failed.")
+    else:
+        print(f"[INFO] Post-shutdown evaluation artifacts written under: {log_dir}")
+    print(f"[INFO] Graceful shutdown summary: {summary_path}")
+
+
+def _run_shutdown_eval(
+    task_name: str,
+    checkpoint_path: str,
+    eval_steps: int,
+    video: bool,
+    video_length: int,
+    summary_path: str,
+) -> subprocess.CompletedProcess:
+    """Launch a short isolated play run from the saved shutdown checkpoint."""
+
+    play_script = Path(__file__).with_name("play.py")
+    cmd = [
+        sys.executable,
+        str(play_script),
+        "--task",
+        task_name,
+        "--checkpoint",
+        checkpoint_path,
+        "--headless",
+        "--num_envs",
+        "1",
+        "--max_steps",
+        str(eval_steps),
+        "--summary-json",
+        summary_path,
+    ]
+    if video:
+        cmd.extend(["--video", "--video_length", str(video_length)])
+
+    return subprocess.run(cmd, check=False, capture_output=True, text=True)
+
+
+def _install_graceful_shutdown(runner, log_dir: str, task_name: str):
+    """Install signal and iteration-boundary shutdown handling on the runner."""
+
+    state = {
+        "requested": False,
+        "reason": None,
+        "signal_count": 0,
+        "checkpoint_path": None,
+        "latest_metrics": None,
+    }
+
+    original_log = runner.log
+
+    def _signal_handler(signum, _frame):
+        state["signal_count"] += 1
+        signal_name = signal.Signals(signum).name
+        if state["requested"]:
+            raise KeyboardInterrupt(f"Forced shutdown requested by {signal_name}.")
+        state["requested"] = True
+        state["reason"] = signal_name
+        print(
+            f"[INFO] Received {signal_name}. Finishing the current iteration, "
+            "saving a shutdown checkpoint, and writing run artifacts."
+        )
+
+    def guarded_log(self, locs: dict, width: int = 80, pad: int = 35):
+        state["latest_metrics"] = _build_recent_metrics_snapshot(self, locs)
+        original_log(locs, width=width, pad=pad)
+        if state["requested"]:
+            checkpoint_path = os.path.join(log_dir, "model_shutdown.pt")
+            infos = {
+                "shutdown_reason": state["reason"],
+                "task": task_name,
+                "total_timesteps": self.tot_timesteps,
+            }
+            self.save(checkpoint_path, infos=infos)
+            state["checkpoint_path"] = checkpoint_path
+            raise _GracefulShutdownRequested(f"Graceful shutdown requested via {state['reason']}.")
+
+    runner.log = MethodType(guarded_log, runner)
+
+    previous_handlers = {
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+    }
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    def restore_handlers():
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+    return state, restore_handlers
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -311,7 +803,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
-        runner.load(resume_path)
+        is_strict_resume = _load_checkpoint_with_shape_filter(runner, resume_path)
+        _apply_resume_policy_overrides(runner, agent_cfg, is_strict_resume=is_strict_resume)
+        # Diagnostic: confirm post-load policy state
+        policy = runner.alg.policy
+        _noise_val = None
+        if hasattr(policy, "std"):
+            _noise_val = float(policy.std.data.mean().item())
+        elif hasattr(policy, "log_std"):
+            _noise_val = float(policy.log_std.data.exp().mean().item())
+        _iter_val = int(runner.current_learning_iteration)
+        _noise_str = f"{_noise_val:.4f}" if _noise_val is not None else "n/a"
+        print(f"[INFO] Post-load state: strict={is_strict_resume}, iter={_iter_val}, noise_std={_noise_str}")
+        if hasattr(policy, "actor_obs_normalizer") and hasattr(policy.actor_obs_normalizer, "count"):
+            print(f"[INFO] Obs normalizer count={int(policy.actor_obs_normalizer.count.item())}")
 
     _ensure_module_parameters_finite(runner.alg.policy, "policy")
     if hasattr(runner.alg.policy, "log_std"):
@@ -319,22 +824,97 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     elif hasattr(runner.alg.policy, "std"):
         _ensure_tensor_finite("policy.std", runner.alg.policy.std.data)
     _install_training_diagnostics(runner)
+    shutdown_state, restore_signal_handlers = _install_graceful_shutdown(runner, log_dir, args_cli.task)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
 
     # run training
-    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+    shutdown_summary = {
+        "task": args_cli.task,
+        "experiment_name": agent_cfg.experiment_name,
+        "log_dir": log_dir,
+        "requested_shutdown": False,
+        "reason": None,
+        "total_timesteps": int(runner.tot_timesteps),
+        "completed_iteration": int(runner.current_learning_iteration),
+        "checkpoint_path": None,
+        "latest_metrics": None,
+        "shutdown_eval": None,
+    }
+    deferred_shutdown_eval = None
+    try:
+        runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+        shutdown_summary["reason"] = "completed"
+        shutdown_summary["latest_metrics"] = shutdown_state["latest_metrics"]
+        shutdown_summary["total_timesteps"] = int(runner.tot_timesteps)
+        shutdown_summary["completed_iteration"] = int(runner.current_learning_iteration)
+        print(f"Training time: {round(time.time() - start_time, 2)} seconds")
+    except _GracefulShutdownRequested as exc:
+        print(f"[INFO] {exc}")
+        shutdown_summary["requested_shutdown"] = True
+        shutdown_summary["reason"] = shutdown_state["reason"]
+        shutdown_summary["checkpoint_path"] = shutdown_state["checkpoint_path"]
+        shutdown_summary["latest_metrics"] = shutdown_state["latest_metrics"]
+        shutdown_summary["total_timesteps"] = int(runner.tot_timesteps)
+        shutdown_summary["completed_iteration"] = int(runner.current_learning_iteration)
 
-    print(f"Training time: {round(time.time() - start_time, 2)} seconds")
+        summary_path = _write_shutdown_summary(log_dir, shutdown_summary)
+        print(f"[INFO] Graceful shutdown checkpoint: {shutdown_state['checkpoint_path']}")
+        print(f"[INFO] Graceful shutdown summary: {summary_path}")
 
-    # close the simulator
-    env.close()
+        if args_cli.shutdown_eval and shutdown_state["checkpoint_path"] is not None:
+            shutdown_summary["shutdown_eval"] = {
+                "scheduled": True,
+                "summary_path": os.path.join(log_dir, "shutdown_eval_summary.json"),
+            }
+            summary_path = _write_shutdown_summary(log_dir, shutdown_summary)
+            deferred_shutdown_eval = {
+                "task_name": args_cli.task,
+                "checkpoint_path": shutdown_state["checkpoint_path"],
+                "eval_steps": args_cli.shutdown_eval_steps,
+                "video": args_cli.shutdown_video,
+                "video_length": args_cli.shutdown_video_length,
+                "summary_path": os.path.join(log_dir, "shutdown_eval_summary.json"),
+                "log_dir": log_dir,
+                "shutdown_summary": shutdown_summary,
+            }
+            print("[INFO] Shutdown eval scheduled after simulator teardown.")
+            print(f"[INFO] Graceful shutdown summary: {summary_path}")
+        else:
+            shutdown_summary["shutdown_eval"] = {"skipped": True}
+            summary_path = _write_shutdown_summary(log_dir, shutdown_summary)
+            print(f"[INFO] Graceful shutdown summary: {summary_path}")
+    finally:
+        restore_signal_handlers()
+        env.close()
+
+    if deferred_shutdown_eval is None:
+        shutdown_summary["finished_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        _write_run_summary(log_dir, shutdown_summary)
+        _append_results_entry(shutdown_summary)
+
+    simulation_app.close()
+    if deferred_shutdown_eval is not None:
+        result = _run_shutdown_eval(
+            task_name=deferred_shutdown_eval["task_name"],
+            checkpoint_path=deferred_shutdown_eval["checkpoint_path"],
+            eval_steps=deferred_shutdown_eval["eval_steps"],
+            video=deferred_shutdown_eval["video"],
+            video_length=deferred_shutdown_eval["video_length"],
+            summary_path=deferred_shutdown_eval["summary_path"],
+        )
+        _finalize_shutdown_eval(
+            shutdown_summary=deferred_shutdown_eval["shutdown_summary"],
+            eval_result=result,
+            log_dir=deferred_shutdown_eval["log_dir"],
+        )
+        deferred_shutdown_eval["shutdown_summary"]["finished_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        _write_run_summary(deferred_shutdown_eval["log_dir"], deferred_shutdown_eval["shutdown_summary"])
+        _append_results_entry(deferred_shutdown_eval["shutdown_summary"])
 
 
 if __name__ == "__main__":
     # run the main function
     main()
-    # close sim app
-    simulation_app.close()

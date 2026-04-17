@@ -8,6 +8,7 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import json
 import sys
 
 from isaaclab.app import AppLauncher
@@ -19,6 +20,13 @@ import cli_args  # isort: skip
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
+parser.add_argument("--max_steps", type=int, default=None, help="Maximum number of evaluation steps before exit.")
+parser.add_argument(
+    "--summary-json",
+    type=str,
+    default=None,
+    help="Optional path to write a compact evaluation summary as JSON.",
+)
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
@@ -57,6 +65,7 @@ simulation_app = app_launcher.app
 
 import os
 import time
+from collections import defaultdict
 
 import gymnasium as gym
 import myproject.tasks  # noqa: F401
@@ -79,6 +88,33 @@ from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_che
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
+
+
+def _scalarize(value):
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 0:
+            return None
+        return float(value.detach().float().mean().item())
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _resolve_play_task_name(task_name: str | None) -> str | None:
+    """Prefer the registered *-Play task when using this script."""
+
+    if task_name is None or "-Play-" in task_name:
+        return task_name
+    if "-v" not in task_name:
+        return task_name
+    play_task_name = task_name.replace("-v", "-Play-v", 1)
+    if play_task_name in gym.registry:
+        print(f"[INFO] Replacing task '{task_name}' with play task '{play_task_name}'.")
+        return play_task_name
+    return task_name
+
+
+args_cli.task = _resolve_play_task_name(args_cli.task)
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -110,6 +146,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         resume_path = retrieve_file_path(args_cli.checkpoint)
     else:
         resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+
+    if os.path.basename(resume_path) == "policy.pt" and os.path.basename(os.path.dirname(resume_path)) == "exported":
+        raise ValueError(
+            "Received an exported TorchScript policy at "
+            f"'{resume_path}'. scripts/rsl_rl/play.py expects an RSL-RL training checkpoint "
+            "(for example 'model_1000.pt'), not the exported 'policy.pt' artifact."
+        )
 
     log_dir = os.path.dirname(resume_path)
 
@@ -181,6 +224,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # reset environment
     obs = env.get_observations()
     timestep = 0
+    episode_metric_values: dict[str, list[float]] = defaultdict(list)
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -189,19 +233,47 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             # agent stepping
             actions = policy(obs)
             # env stepping
-            obs, _, dones, _ = env.step(actions)
+            obs, _, dones, extras = env.step(actions)
             # reset recurrent states for episodes that have terminated
             policy_nn.reset(dones)
+            if "episode" in extras:
+                for key, value in extras["episode"].items():
+                    scalar = _scalarize(value)
+                    if scalar is not None:
+                        episode_metric_values[key].append(scalar)
+            elif "log" in extras:
+                for key, value in extras["log"].items():
+                    scalar = _scalarize(value)
+                    if scalar is not None:
+                        episode_metric_values[key].append(scalar)
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
             if timestep == args_cli.video_length:
                 break
+        else:
+            timestep += 1
+
+        if args_cli.max_steps is not None and timestep >= args_cli.max_steps:
+            break
 
         # time delay for real-time evaluation
         sleep_time = dt - (time.time() - start_time)
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
+
+    if args_cli.summary_json:
+        summary = {
+            "task": args_cli.task,
+            "checkpoint": resume_path,
+            "steps": int(timestep),
+            "completed_episode_count": int(max((len(v) for v in episode_metric_values.values()), default=0)),
+            "episode_metrics": {
+                key: float(sum(values) / len(values)) for key, values in episode_metric_values.items() if values
+            },
+        }
+        with open(args_cli.summary_json, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, sort_keys=True)
 
     # close the simulator
     env.close()
