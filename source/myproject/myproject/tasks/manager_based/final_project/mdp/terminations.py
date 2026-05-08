@@ -79,3 +79,15 @@ def bad_orientation_safe(
     upright_cos = torch.clamp(-asset.data.projected_gravity_b[:, 2], min=-1.0, max=1.0)
     min_allowed_cos = math.cos(limit_angle)
     return upright_cos < min_allowed_cos
+
+
+def prolonged_single_support(
+    env: ManagerBasedRLEnv,
+    max_air_time: float = 1.0,
+    contact_force_threshold: float = 1.0,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+) -> torch.Tensor:
+    """Terminate if any foot has been airborne longer than max_air_time (true hop)."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    current_air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+    return (current_air_time > max_air_time).any(dim=-1)

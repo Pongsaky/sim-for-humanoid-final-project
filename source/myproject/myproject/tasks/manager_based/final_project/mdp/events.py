@@ -91,6 +91,7 @@ def reset_root_state_on_shared_map(
     base_pos: tuple[float, float, float],
     base_rot: tuple[float, float, float, float],
     xy_range: tuple[float, float],
+    lin_vel_x_range: tuple[float, float] = (0.0, 0.0),
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ):
     """Reset robots on a shared map using absolute world coordinates.
@@ -119,6 +120,10 @@ def reset_root_state_on_shared_map(
 
     orientations = torch.tensor(base_rot, device=asset.device, dtype=torch.float32).repeat(len(env_ids), 1)
     velocities = torch.zeros((len(env_ids), 6), device=asset.device, dtype=torch.float32)
+    if lin_vel_x_range[1] > 0.0:
+        velocities[:, 0] = torch.empty(len(env_ids), device=asset.device, dtype=torch.float32).uniform_(
+            float(lin_vel_x_range[0]), float(lin_vel_x_range[1])
+        )
 
     asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
     asset.write_root_velocity_to_sim(velocities, env_ids=env_ids)

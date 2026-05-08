@@ -640,6 +640,69 @@ def speed_gated_goal_progress_delta(
     return progress * alive_gate * speed_gate
 
 
+def time_decayed_speed_gated_goal_progress(
+    env: ManagerBasedRLEnv,
+    goal_x: float,
+    min_forward_speed: float,
+    early_boost: float = 2.0,
+    decay_steps: float = 50.0,
+    start_x: float | None = None,
+    normalize_by_goal: bool = True,
+    min_height: float = 0.42,
+    safe_height: float = 0.70,
+    min_upright: float = 0.30,
+    safe_upright: float = 0.80,
+    contact_force_threshold: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+) -> torch.Tensor:
+    """speed_gated_goal_progress_delta with an early-episode multiplicative boost.
+
+    Multiplier: 1 + early_boost * exp(-t / decay_steps). Default makes step-0 worth 3x
+    and decays toward 1x; punishes warm-walks at any training stage.
+    """
+    base = speed_gated_goal_progress_delta(
+        env=env,
+        goal_x=goal_x,
+        start_x=start_x,
+        min_forward_speed=min_forward_speed,
+        normalize_by_goal=normalize_by_goal,
+        min_height=min_height,
+        safe_height=safe_height,
+        min_upright=min_upright,
+        safe_upright=safe_upright,
+        contact_force_threshold=contact_force_threshold,
+        asset_cfg=asset_cfg,
+        sensor_cfg=sensor_cfg,
+    )
+    t = env.episode_length_buf.float()
+    boost = 1.0 + early_boost * torch.exp(-t / max(decay_steps, 1.0))
+    return base * boost
+
+
+def single_leg_flight_penalty(
+    env: ManagerBasedRLEnv,
+    max_single_stance_time: float = 0.5,
+    contact_force_threshold: float = 1.0,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+) -> torch.Tensor:
+    """Penalize prolonged single-foot airborne phases — the signature of hopping.
+
+    For each foot, accumulate ``max(0, current_air_time - max_single_stance_time)``
+    while the foot is not in contact. Sums over feet. Zero when both feet alternate
+    on a normal walk/run cadence; grows with single-leg hopping.
+    """
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    current_air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+    in_contact = (
+        contact_sensor.data.net_forces_w_history[:, 0, sensor_cfg.body_ids].norm(dim=-1)
+        > contact_force_threshold
+    )
+    excess = torch.clamp(current_air_time - max_single_stance_time, min=0.0)
+    excess = torch.where(in_contact, torch.zeros_like(excess), excess)
+    return excess.sum(dim=-1)
+
+
 def zone_crossing_bonus(
     env: ManagerBasedRLEnv,
     zone_positions: tuple[float, ...],

@@ -204,3 +204,71 @@ class FinalProjectUnitreeH1FastWalkPPORunnerCfg(FinalProjectUnitreeH1RoughGoalBa
         self.experiment_name = "final_project_unitree_h1_fastwalk"
         self.run_name = ""
         self.resume = False
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkCurriculumPPORunnerCfg(FinalProjectUnitreeH1FastWalkPPORunnerCfg):
+    """Fast-walk + init-velocity curriculum: resumes from a prior fastwalk checkpoint.
+
+    Set --resume --load_run <prior fastwalk dir> --checkpoint <model_*.pt> on the CLI.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = "final_project_unitree_h1_fastwalk_curriculum"
+        self.run_name = ""
+        self.max_iterations = 4000
+        self.resume = False
+        _apply_runner_override(self, "fastwalk_curriculum")
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkCurriculumV2PPORunnerCfg(FinalProjectUnitreeH1FastWalkCurriculumPPORunnerCfg):
+    """v2: biped-gait shaping. Resumes from best v1 fastwalk_curriculum checkpoint.
+
+    Set --resume --load_experiment final_project_unitree_h1_fastwalk_curriculum
+    --load_run <v1 dir> --checkpoint <model_*.pt> on the CLI.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = "final_project_unitree_h1_fastwalk_curriculum_v2"
+        self.run_name = ""
+        self.max_iterations = 2000
+        self.resume = False
+        _apply_runner_override(self, "fastwalk_curriculum_v2")
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkCurriculumV3PPORunnerCfg(FinalProjectUnitreeH1FastWalkCurriculumV2PPORunnerCfg):
+    """v3: aggressive speed push + hop-kill. Resumes from best v2 checkpoint.
+
+    Set --resume --load_experiment final_project_unitree_h1_fastwalk_curriculum_v2
+    --load_run <v2 dir> --checkpoint <model_*.pt> on the CLI.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = "final_project_unitree_h1_fastwalk_curriculum_v3"
+        self.run_name = ""
+        self.max_iterations = 1500
+        self.resume = False
+        self.algorithm.entropy_coef = 0.01
+        _apply_runner_override(self, "fastwalk_curriculum_v3")
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkCurriculumV4PPORunnerCfg(FinalProjectUnitreeH1FastWalkCurriculumV3PPORunnerCfg):
+    """v4: sprint regime. Resumes from best v3 checkpoint.
+
+    Set --resume --load_experiment final_project_unitree_h1_fastwalk_curriculum_v3
+    --load_run <v3 dir> --checkpoint <model_*.pt> on the CLI.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = "final_project_unitree_h1_fastwalk_curriculum_v4"
+        self.run_name = ""
+        self.max_iterations = 1125
+        self.resume = False
+        _apply_runner_override(self, "fastwalk_curriculum_v4")

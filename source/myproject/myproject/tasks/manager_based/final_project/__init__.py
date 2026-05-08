@@ -103,6 +103,76 @@ gym.register(
 )
 
 gym.register(
+    id="Template-Final-Project-Unitree-H1-FastWalk-Curriculum-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1FastWalkCurriculumEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1FastWalkCurriculumPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Template-Final-Project-Unitree-H1-FastWalk-Curriculum-V2-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1FastWalkCurriculumV2EnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1FastWalkCurriculumV2PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Template-Final-Project-Unitree-H1-FastWalk-Curriculum-V2-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1FastWalkCurriculumV2EnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1FastWalkCurriculumV2PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Template-Final-Project-Unitree-H1-FastWalk-Curriculum-V3-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1FastWalkCurriculumV3EnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1FastWalkCurriculumV3PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Template-Final-Project-Unitree-H1-FastWalk-Curriculum-V3-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1FastWalkCurriculumV3EnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1FastWalkCurriculumV3PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Template-Final-Project-Unitree-H1-FastWalk-Curriculum-V4-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1FastWalkCurriculumV4EnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1FastWalkCurriculumV4PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Template-Final-Project-Unitree-H1-FastWalk-Curriculum-V4-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1FastWalkCurriculumV4EnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1FastWalkCurriculumV4PPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Template-Final-Project-Unitree-H1-Stability-Arena-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,

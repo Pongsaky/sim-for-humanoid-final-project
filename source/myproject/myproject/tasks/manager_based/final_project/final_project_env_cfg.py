@@ -624,6 +624,191 @@ class FinalProjectFastWalkRewards(H1Rewards):
 
 
 @configclass
+class FinalProjectFastWalkCurriculumRewards(FinalProjectFastWalkRewards):
+    """FastWalk rewards with time-decayed early boost + stiffer speed gate."""
+
+    goal_progress = RewTerm(
+        func=custom_mdp.time_decayed_speed_gated_goal_progress,
+        weight=5.0,
+        params={
+            "goal_x": GOAL_X,
+            "start_x": MAP_START_POS[0],
+            "normalize_by_goal": False,
+            "min_forward_speed": 0.7,
+            "early_boost": 2.0,
+            "decay_steps": 50.0,
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.30,
+            "safe_upright": 0.80,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+
+
+@configclass
+class FinalProjectFastWalkCurriculumV2Rewards(FinalProjectFastWalkCurriculumRewards):
+    """v1 + biped-gait shaping to cure one-leg-hopping bootstrap.
+
+    feet_alternation: positive shaping that only fires under single_stance==1
+    (Isaac Lab's feet_air_time_positive_biped, gated by upright/alive).
+    hop_penalty: punish prolonged single-foot airborne phases (hop signature).
+    """
+
+    feet_alternation = RewTerm(
+        func=custom_mdp.gated_feet_air_time_biped,
+        weight=1.0,
+        params={
+            "command_name": "base_velocity",
+            "threshold": 0.4,
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.30,
+            "safe_upright": 0.80,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "torso_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    hop_penalty = RewTerm(
+        func=custom_mdp.single_leg_flight_penalty,
+        weight=-0.5,
+        params={
+            "max_single_stance_time": 0.5,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+        },
+    )
+
+
+@configclass
+class FinalProjectFastWalkCurriculumV3Rewards(FinalProjectFastWalkCurriculumV2Rewards):
+    """v3: aggressive speed push + strong hop suppression (dense-only) for ~3s traversal."""
+
+    goal_progress = RewTerm(
+        func=custom_mdp.time_decayed_speed_gated_goal_progress,
+        weight=5.0,
+        params={
+            "goal_x": GOAL_X,
+            "start_x": MAP_START_POS[0],
+            "normalize_by_goal": False,
+            "min_forward_speed": 1.5,
+            "early_boost": 0.5,
+            "decay_steps": 20.0,
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.30,
+            "safe_upright": 0.80,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    time_cost = RewTerm(func=custom_mdp.time_penalty, weight=-8.0)
+    goal_reached_bonus = RewTerm(
+        func=custom_mdp.time_remaining_goal_bonus,
+        weight=0.5,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "base_bonus": 500.0},
+    )
+    forward_speed = RewTerm(
+        func=custom_mdp.gated_forward_speed,
+        weight=2.0,
+        params={
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.30,
+            "safe_upright": 0.80,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    feet_alternation = RewTerm(
+        func=custom_mdp.gated_feet_air_time_biped,
+        weight=3.0,
+        params={
+            "command_name": "base_velocity",
+            "threshold": 0.4,
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.30,
+            "safe_upright": 0.80,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "torso_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    hop_penalty = RewTerm(
+        func=custom_mdp.single_leg_flight_penalty,
+        weight=-8.0,
+        params={
+            "max_single_stance_time": 0.5,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+        },
+    )
+
+
+@configclass
+class FinalProjectFastWalkCurriculumV4Rewards(FinalProjectFastWalkCurriculumV3Rewards):
+    """v4: sprint regime — wider velocity gate, balanced forward_speed vs goal bonus, out_of_bounds penalty."""
+
+    feet_air_time = None
+    track_lin_vel_xy_exp = RewTerm(
+        func=mdp.track_lin_vel_xy_yaw_frame_exp,
+        weight=0.5,
+        params={"command_name": "base_velocity", "std": 1.0},
+    )
+    lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
+    forward_speed = RewTerm(
+        func=custom_mdp.gated_forward_speed,
+        weight=3.0,
+        params={
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.30,
+            "safe_upright": 0.80,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    goal_reached_bonus = RewTerm(
+        func=custom_mdp.time_remaining_goal_bonus,
+        weight=2.0,
+        params={"goal_x": GOAL_X, "start_x": MAP_START_POS[0], "base_bonus": 500.0},
+    )
+    out_of_bounds_penalty = RewTerm(
+        func=mdp.is_terminated_term,
+        weight=-50.0,
+        params={"term_keys": "out_of_bounds"},
+    )
+    feet_alternation = RewTerm(
+        func=custom_mdp.gated_feet_air_time_biped,
+        weight=3.0,
+        params={
+            "command_name": "base_velocity",
+            "threshold": 0.25,
+            "min_height": 0.42,
+            "safe_height": 0.70,
+            "min_upright": 0.30,
+            "safe_upright": 0.80,
+            "contact_force_threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_link"),
+            "torso_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+        },
+    )
+    joint_deviation_hip = RewTerm(
+        func=mdp.joint_deviation_l1,
+        weight=-0.1,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_yaw", ".*_hip_roll"])},
+    )
+    joint_deviation_arms = RewTerm(
+        func=mdp.joint_deviation_l1,
+        weight=-0.02,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_shoulder_.*", ".*_elbow"])},
+    )
+
+
+@configclass
 class FinalProjectCurriculum:
     """Map-aware curriculum uses explicit phase overrides instead of inherited terrain speed ramps."""
 
@@ -1503,6 +1688,174 @@ class FinalProjectUnitreeH1FastWalkEnvCfg_PLAY(FinalProjectUnitreeH1FastWalkEnvC
             "base_pos": MAP_START_POS,
             "base_rot": MAP_START_ROT,
             "xy_range": MAP_START_POS_JITTER_XY,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkCurriculumEnvCfg(FinalProjectUnitreeH1FastWalkEnvCfg):
+    """FastWalk + init-velocity curriculum + time-decayed early-progress reward.
+
+    Cures the slow-start "warm walk" habit by training with an annealing init-velocity
+    kick: early iterations spawn the robot with forward velocity (easy starts to lock in
+    the running gait); the kick anneals to zero over the run so by end-of-training the
+    policy must bootstrap from a true cold start — matching evaluation conditions.
+
+    Evaluate with the existing `Template-Final-Project-Unitree-H1-FastWalk-Play-v0`
+    pointing `--load_run` at this run's log dir; observation space is identical.
+    """
+
+    rewards: FinalProjectFastWalkCurriculumRewards = FinalProjectFastWalkCurriculumRewards()
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_training(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "lin_vel_x_range": (0.6, 1.2),
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.curriculum.init_lin_vel_x = CurrTerm(
+            func=custom_mdp.anneal_init_lin_vel_x,
+            params={
+                "start_max": 1.2,
+                "start_min": 0.6,
+                "end_iter": 2000,
+                "iters_per_step": 24,
+                "reset_term_name": "reset_base",
+            },
+        )
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkCurriculumV2EnvCfg(FinalProjectUnitreeH1FastWalkCurriculumEnvCfg):
+    """v1 + biped-gait shaping (feet_alternation + hop_penalty) to fix one-leg-hopping bootstrap.
+
+    Resume from the best v1 checkpoint and continue training with the new shaping.
+    Observation space is unchanged so policy/value nets transfer cleanly.
+
+    Disables the init-velocity kick (v1 curriculum) — V2's purpose is to shape the
+    *cold-start* gait, so robots must spawn at rest. Re-enabling the kick would
+    reintroduce the warm-walk distribution we already cured in v1.
+    """
+
+    rewards: FinalProjectFastWalkCurriculumV2Rewards = FinalProjectFastWalkCurriculumV2Rewards()
+
+    def finalize_after_overrides(self):
+        super().finalize_after_overrides()
+        self.events.reset_base.params["lin_vel_x_range"] = (0.0, 0.0)
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.curriculum.init_lin_vel_x = None
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkCurriculumV2EnvCfg_PLAY(FinalProjectUnitreeH1FastWalkCurriculumV2EnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.observations.policy.enable_corruption = False
+        self.curriculum.init_lin_vel_x = None
+        self.events.reset_base.params["lin_vel_x_range"] = (0.0, 0.0)
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_play(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "lin_vel_x_range": (0.0, 0.0),
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkCurriculumV3EnvCfg(FinalProjectUnitreeH1FastWalkCurriculumV2EnvCfg):
+    """v3: aggressive speed push (cmd 2.0-3.0) + hop-kill termination.
+
+    Resume from best v2 checkpoint via CLI: --resume --load_experiment
+    final_project_unitree_h1_fastwalk_curriculum_v2 --load_run <v2 dir> --checkpoint <ckpt>.
+    """
+
+    rewards: FinalProjectFastWalkCurriculumV3Rewards = FinalProjectFastWalkCurriculumV3Rewards()
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (2.0, 3.0)
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkCurriculumV3EnvCfg_PLAY(FinalProjectUnitreeH1FastWalkCurriculumV3EnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.observations.policy.enable_corruption = False
+        self.curriculum.init_lin_vel_x = None
+        self.events.reset_base.params["lin_vel_x_range"] = (0.0, 0.0)
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_play(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "lin_vel_x_range": (0.0, 0.0),
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkCurriculumV4EnvCfg(FinalProjectUnitreeH1FastWalkCurriculumV3EnvCfg):
+    """v4: sprint regime — cmd ceiling (2.5, 4.0), wider tracking gate, bigger sprint reward."""
+
+    rewards: FinalProjectFastWalkCurriculumV4Rewards = FinalProjectFastWalkCurriculumV4Rewards()
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (2.5, 4.0)
+
+
+@configclass
+class FinalProjectUnitreeH1FastWalkCurriculumV4EnvCfg_PLAY(FinalProjectUnitreeH1FastWalkCurriculumV4EnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.observations.policy.enable_corruption = False
+        self.curriculum.init_lin_vel_x = None
+        self.events.reset_base.params["lin_vel_x_range"] = (0.0, 0.0)
+
+    def finalize_after_overrides(self):
+        _validate_shared_map_env_cfg(self.scene.num_envs, self.scene.env_spacing)
+        _tune_shared_arena_physx_buffers_for_play(self)
+        self.scene.terrain = _make_final_map_terrain_cfg(self.scene.num_envs, self.scene.env_spacing)
+        self.scene.robot.init_state.pos = MAP_START_POS
+        self.scene.robot.init_state.rot = MAP_START_ROT
+        self.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+        self.events.reset_base.params = {
+            "base_pos": MAP_START_POS,
+            "base_rot": MAP_START_ROT,
+            "xy_range": MAP_START_POS_JITTER_XY,
+            "lin_vel_x_range": (0.0, 0.0),
             "asset_cfg": SceneEntityCfg("robot"),
         }
 
