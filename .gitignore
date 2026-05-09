@@ -13,6 +13,7 @@
 **/*.usda
 **/*.usdc
 **/*.usdz
+!source/myproject/myproject/assets/environments/test_map.usd
 
 # Python
 .DS_Store

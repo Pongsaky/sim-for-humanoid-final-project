@@ -12,16 +12,34 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+def _axis_index(axis: str) -> int:
+    if axis == "x":
+        return 0
+    if axis == "y":
+        return 1
+    raise ValueError(f"Unsupported axis '{axis}'. Expected 'x' or 'y'.")
+
+
+def forward_velocity_toward_goal_axis(
+    env: ManagerBasedRLEnv,
+    goal: float,
+    axis: str = "x",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward world-frame velocity toward a goal line along the selected axis."""
+    asset = env.scene[asset_cfg.name]
+    goal_dir_w = torch.zeros_like(asset.data.root_lin_vel_w[:, :2])
+    goal_dir_w[:, _axis_index(axis)] = 1.0 if goal >= 0.0 else -1.0
+    return torch.sum(asset.data.root_lin_vel_w[:, :2] * goal_dir_w, dim=1)
+
+
 def forward_velocity_toward_goal(
     env: ManagerBasedRLEnv,
     goal_x: float,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Reward forward world-frame velocity toward a goal line located at +x in each env frame."""
-    asset = env.scene[asset_cfg.name]
-    goal_dir_w = torch.zeros_like(asset.data.root_lin_vel_w[:, :2])
-    goal_dir_w[:, 0] = 1.0
-    return torch.sum(asset.data.root_lin_vel_w[:, :2] * goal_dir_w, dim=1)
+    return forward_velocity_toward_goal_axis(env=env, goal=goal_x, axis="x", asset_cfg=asset_cfg)
 
 
 def goal_distance_progress(
@@ -48,17 +66,39 @@ def goal_progress_delta(
     zero once the policy reliably reaches the goal. By default the progress is
     normalized by the goal distance; the baseline can opt into raw meter deltas.
     """
+    return goal_progress_delta_axis(
+        env=env,
+        goal=goal_x,
+        start=start_x,
+        axis="x",
+        normalize_by_goal=normalize_by_goal,
+        asset_cfg=asset_cfg,
+    )
+
+
+def goal_progress_delta_axis(
+    env: ManagerBasedRLEnv,
+    goal: float,
+    start: float | None = None,
+    axis: str = "x",
+    normalize_by_goal: bool = True,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward per-step progress toward a goal line on the selected world axis."""
     asset = env.scene[asset_cfg.name]
-    if start_x is None:
-        progress_start_x = env.scene.env_origins[:, 0]
+    axis_idx = _axis_index(axis)
+    direction = 1.0 if goal >= 0.0 else -1.0
+    if start is None:
+        progress_start = env.scene.env_origins[:, axis_idx]
     else:
-        progress_start_x = torch.full_like(asset.data.root_pos_w[:, 0], float(start_x))
-    current_progress = asset.data.root_pos_w[:, 0] - progress_start_x
+        progress_start = torch.full_like(asset.data.root_pos_w[:, axis_idx], float(start))
+    current_progress = (asset.data.root_pos_w[:, axis_idx] - progress_start) * direction
     if normalize_by_goal:
-        current_progress = current_progress / max(goal_x, 1e-6)
+        current_progress = current_progress / max(abs(goal), 1e-6)
         current_progress = torch.clamp(current_progress, min=0.0, max=1.5)
 
-    prev_progress = getattr(env, "_goal_progress_prev", None)
+    prev_attr = "_goal_progress_prev" if axis == "x" else f"_goal_progress_prev_{axis}"
+    prev_progress = getattr(env, prev_attr, None)
     if prev_progress is None or prev_progress.shape != current_progress.shape:
         prev_progress = current_progress.clone()
 
@@ -67,10 +107,46 @@ def goal_progress_delta(
         reset_mask = env.episode_length_buf <= 1
         delta_progress = torch.where(reset_mask, torch.zeros_like(delta_progress), delta_progress)
 
-    env._goal_progress_prev = current_progress.clone()
+    setattr(env, prev_attr, current_progress.clone())
     if normalize_by_goal:
         return torch.clamp(delta_progress, min=-0.25, max=0.25)
     return torch.clamp(delta_progress, min=-0.05, max=0.05)
+
+
+def gated_goal_progress_delta_axis(
+    env: ManagerBasedRLEnv,
+    goal: float,
+    min_height: float,
+    safe_height: float,
+    start: float | None = None,
+    axis: str = "x",
+    normalize_by_goal: bool = True,
+    min_upright: float = 0.55,
+    safe_upright: float = 0.9,
+    contact_force_threshold: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*torso_link"),
+) -> torch.Tensor:
+    """Reward progress on the selected axis only while the robot is upright."""
+    progress = goal_progress_delta_axis(
+        env=env,
+        goal=goal,
+        start=start,
+        axis=axis,
+        normalize_by_goal=normalize_by_goal,
+        asset_cfg=asset_cfg,
+    )
+    alive_gate = upright_alive_gate(
+        env=env,
+        min_height=min_height,
+        safe_height=safe_height,
+        min_upright=min_upright,
+        safe_upright=safe_upright,
+        contact_force_threshold=contact_force_threshold,
+        asset_cfg=asset_cfg,
+        sensor_cfg=sensor_cfg,
+    )
+    return progress * alive_gate
 
 
 def gated_goal_progress_delta(
@@ -511,6 +587,25 @@ def upright_alive_gate(
     return height_gate * upright_gate * contact_gate
 
 
+def goal_reached_bonus_axis(
+    env: ManagerBasedRLEnv,
+    goal: float,
+    start: float | None = None,
+    axis: str = "x",
+    bonus: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """One-step bonus whenever robot has crossed the goal line on the selected axis."""
+    asset = env.scene[asset_cfg.name]
+    axis_idx = _axis_index(axis)
+    if start is None:
+        goal_line = env.scene.env_origins[:, axis_idx] + goal
+    else:
+        goal_line = torch.full_like(asset.data.root_pos_w[:, axis_idx], float(start + goal))
+    reached = asset.data.root_pos_w[:, axis_idx] >= goal_line
+    return reached.float() * bonus
+
+
 def goal_reached_bonus(
     env: ManagerBasedRLEnv,
     goal_x: float,
@@ -519,13 +614,9 @@ def goal_reached_bonus(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """One-step bonus whenever robot has crossed the goal x-line."""
-    asset = env.scene[asset_cfg.name]
-    if start_x is None:
-        goal_line_x = env.scene.env_origins[:, 0] + goal_x
-    else:
-        goal_line_x = torch.full_like(asset.data.root_pos_w[:, 0], float(start_x + goal_x))
-    reached = asset.data.root_pos_w[:, 0] >= goal_line_x
-    return reached.float() * bonus
+    return goal_reached_bonus_axis(
+        env=env, goal=goal_x, start=start_x, axis="x", bonus=bonus, asset_cfg=asset_cfg
+    )
 
 
 def base_height_penalty(
@@ -545,10 +636,11 @@ def time_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
     return torch.full((env.num_envs,), step_dt, device=env.device, dtype=torch.float32)
 
 
-def completion_time_metric(
+def completion_time_metric_axis(
     env: ManagerBasedRLEnv,
-    goal_x: float,
-    start_x: float | None = None,
+    goal: float,
+    start: float | None = None,
+    axis: str = "x",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Zero-reward metric: records elapsed seconds for each env that crosses the goal this step.
@@ -558,12 +650,13 @@ def completion_time_metric(
     Must use a non-zero weight so the reward manager does not skip the call.
     """
     asset = env.scene[asset_cfg.name]
-    if start_x is None:
-        goal_line_x = env.scene.env_origins[:, 0] + goal_x
+    axis_idx = _axis_index(axis)
+    if start is None:
+        goal_line = env.scene.env_origins[:, axis_idx] + goal
     else:
-        goal_line_x = torch.full_like(asset.data.root_pos_w[:, 0], float(start_x + goal_x))
+        goal_line = torch.full_like(asset.data.root_pos_w[:, axis_idx], float(start + goal))
 
-    reached = asset.data.root_pos_w[:, 0] >= goal_line_x
+    reached = asset.data.root_pos_w[:, axis_idx] >= goal_line
     step_dt = float(getattr(env, "step_dt", 1.0))
     # Reset every step so stale values from previous steps are never re-read.
     env.extras["completion_times_s"] = (
@@ -572,10 +665,21 @@ def completion_time_metric(
     return torch.zeros(env.num_envs, device=env.device, dtype=torch.float32)
 
 
-def time_remaining_goal_bonus(
+def completion_time_metric(
     env: ManagerBasedRLEnv,
     goal_x: float,
     start_x: float | None = None,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Zero-reward metric for crossing the goal x-line."""
+    return completion_time_metric_axis(env=env, goal=goal_x, start=start_x, axis="x", asset_cfg=asset_cfg)
+
+
+def time_remaining_goal_bonus_axis(
+    env: ManagerBasedRLEnv,
+    goal: float,
+    start: float | None = None,
+    axis: str = "x",
     base_bonus: float = 200.0,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
@@ -585,16 +689,30 @@ def time_remaining_goal_bonus(
     reaching the goal faster rather than only penalizing slow attempts via time_cost.
     """
     asset = env.scene[asset_cfg.name]
-    if start_x is None:
-        goal_line_x = env.scene.env_origins[:, 0] + goal_x
+    axis_idx = _axis_index(axis)
+    if start is None:
+        goal_line = env.scene.env_origins[:, axis_idx] + goal
     else:
-        goal_line_x = torch.full_like(asset.data.root_pos_w[:, 0], float(start_x + goal_x))
-    reached = asset.data.root_pos_w[:, 0] >= goal_line_x
+        goal_line = torch.full_like(asset.data.root_pos_w[:, axis_idx], float(start + goal))
+    reached = asset.data.root_pos_w[:, axis_idx] >= goal_line
 
     max_steps = float(getattr(env, "max_episode_length", 1))
     current_steps = env.episode_length_buf.float()
     time_remaining_fraction = torch.clamp(1.0 - current_steps / max_steps, min=0.0, max=1.0)
     return reached.float() * base_bonus * time_remaining_fraction
+
+
+def time_remaining_goal_bonus(
+    env: ManagerBasedRLEnv,
+    goal_x: float,
+    start_x: float | None = None,
+    base_bonus: float = 200.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """One-step bonus on crossing the goal x-line, scaled by remaining episode time fraction."""
+    return time_remaining_goal_bonus_axis(
+        env=env, goal=goal_x, start=start_x, axis="x", base_bonus=base_bonus, asset_cfg=asset_cfg
+    )
 
 
 def speed_gated_goal_progress_delta(

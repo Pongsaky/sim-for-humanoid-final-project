@@ -83,6 +83,26 @@ gym.register(
 )
 
 gym.register(
+    id="Template-Final-Project-Unitree-H1-TestMap-RoughGoal-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1TestMapRoughGoalBaselineEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1RoughGoalBaselinePPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Template-Final-Project-Unitree-H1-TestMap-SpeedRun-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.final_project_env_cfg:FinalProjectUnitreeH1TestMapSpeedRunEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FinalProjectUnitreeH1SpeedRunPPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Template-Final-Project-Unitree-H1-FastWalk-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,

@@ -28,6 +28,7 @@ _CURRICULUM_ARENA_DIR = _ASSETS_ENV_DIR / "curriculum_arenas"
 
 FINAL_MAP_USD_PATH = str(_ASSETS_ENV_DIR / "final_map_2.usd")
 FINAL_MAP_USD_PRIM_PATH = "/World/ground"
+TEST_MAP_USD_PATH = str(_ASSETS_ENV_DIR / "test_map.usd")
 CURRICULUM_ARENA_STABILITY_USD_PATH = str(_CURRICULUM_ARENA_DIR / "stability_arena.usda")
 CURRICULUM_ARENA_CROSSING_USD_PATH = str(_CURRICULUM_ARENA_DIR / "crossing_arena.usda")
 CURRICULUM_ARENA_STABILITY_LAYOUT_PATH = str(_CURRICULUM_ARENA_DIR / "stability_arena.layout.json")
@@ -46,6 +47,13 @@ SPAWN_Z_CLEARANCE = 0.08
 MAP_START_POS = (-6.5, 0, 1.05 + SPAWN_Z_CLEARANCE)
 MAP_START_ROT = (1.0, 0.0, 0.0, 0.0)
 MAP_START_POS_JITTER_XY = (0.3, 0.5)
+TEST_MAP_BOUNDS_X = (-4.0, 4.0)
+TEST_MAP_BOUNDS_Y = (-132.0, 132.0)
+TEST_MAP_START_POS = (0.0, -130.0, 1.05 + SPAWN_Z_CLEARANCE)
+TEST_MAP_START_ROT = (0.70710678, 0.0, 0.0, 0.70710678)
+TEST_MAP_START_POS_JITTER_XY = (0.3, 0.5)
+TEST_MAP_GOAL_Y = TEST_MAP_BOUNDS_Y[1] - TEST_MAP_START_POS[1] - 2.0
+TEST_MAP_EPISODE_LENGTH_S = 260.0
 CURRICULUM_ARENA_START_POS_JITTER_XY = (0.4, 0.4)
 # Full map traversal: spawn at MAP_START_POS[0], goal 0.3 m inside the right boundary.
 GOAL_X = REAL_MAP_BOUNDS_X[1] - MAP_START_POS[0] - 0.3  # 7.6 - (-6.5) - 0.3 = 13.8
@@ -165,6 +173,10 @@ def _make_usd_terrain_cfg(usd_path: str) -> TerrainImporterCfg:
 
 def _make_final_map_terrain_cfg(num_envs: int, env_spacing: float) -> TerrainImporterCfg:
     return _make_usd_terrain_cfg(FINAL_MAP_USD_PATH)
+
+
+def _make_test_map_terrain_cfg(num_envs: int, env_spacing: float) -> TerrainImporterCfg:
+    return _make_usd_terrain_cfg(TEST_MAP_USD_PATH)
 
 
 def _load_arena_layout(layout_path: str) -> dict:
@@ -981,7 +993,9 @@ class FinalProjectUnitreeH1EnvCfg(H1FlatEnvCfg):
         if "stance_leg_extension_min_height" in overrides:
             self.rewards.stance_leg_extension.params["min_height"] = float(overrides["stance_leg_extension_min_height"])
         if "stance_leg_extension_safe_height" in overrides:
-            self.rewards.stance_leg_extension.params["safe_height"] = float(overrides["stance_leg_extension_safe_height"])
+            self.rewards.stance_leg_extension.params["safe_height"] = float(
+                overrides["stance_leg_extension_safe_height"]
+            )
         if "stance_leg_extension_min_upright" in overrides:
             self.rewards.stance_leg_extension.params["min_upright"] = float(
                 overrides["stance_leg_extension_min_upright"]
@@ -1216,9 +1230,7 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
                 f"expected {BASELINE_GOAL_REACHED_BONUS_WEIGHT}."
             )
         if self.rewards.upright_survival.weight != 0.75:
-            raise ValueError(
-                f"Baseline upright_survival weight={self.rewards.upright_survival.weight} expected 0.75."
-            )
+            raise ValueError(f"Baseline upright_survival weight={self.rewards.upright_survival.weight} expected 0.75.")
         if self.rewards.upright_survival.params.get("min_height") != 0.42:
             raise ValueError(
                 f"Baseline upright_survival min_height={self.rewards.upright_survival.params.get('min_height')} "
@@ -1239,7 +1251,9 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
         if "action_scale" in overrides:
             self.actions.joint_pos.scale = float(overrides["action_scale"])
         if "lin_vel_x" in overrides:
-            self.commands.base_velocity.ranges.lin_vel_x = _tuple2(overrides["lin_vel_x"], self.commands.base_velocity.ranges.lin_vel_x)
+            self.commands.base_velocity.ranges.lin_vel_x = _tuple2(
+                overrides["lin_vel_x"], self.commands.base_velocity.ranges.lin_vel_x
+            )
         if "track_lin_vel_xy_weight" in overrides:
             self.rewards.track_lin_vel_xy_exp.weight = float(overrides["track_lin_vel_xy_weight"])
         if "track_lin_vel_xy_std" in overrides:
@@ -1301,7 +1315,9 @@ class FinalProjectUnitreeH1BaselineEnvCfg(H1FlatEnvCfg):
         if "stance_leg_extension_min_height" in overrides:
             self.rewards.stance_leg_extension.params["min_height"] = float(overrides["stance_leg_extension_min_height"])
         if "stance_leg_extension_safe_height" in overrides:
-            self.rewards.stance_leg_extension.params["safe_height"] = float(overrides["stance_leg_extension_safe_height"])
+            self.rewards.stance_leg_extension.params["safe_height"] = float(
+                overrides["stance_leg_extension_safe_height"]
+            )
         if "stance_leg_extension_min_upright" in overrides:
             self.rewards.stance_leg_extension.params["min_upright"] = float(
                 overrides["stance_leg_extension_min_upright"]
@@ -1639,6 +1655,102 @@ class FinalProjectUnitreeH1SpeedRunEnvCfg_PLAY(FinalProjectUnitreeH1SpeedRunEnvC
         }
 
 
+def _configure_test_map_play_cfg(env_cfg) -> None:
+    """Retarget a final-map play config to the packaged full test_map.usd corridor."""
+
+    _validate_shared_map_env_cfg(env_cfg.scene.num_envs, env_cfg.scene.env_spacing)
+    _tune_shared_arena_physx_buffers_for_play(env_cfg)
+    env_cfg.scene.terrain = _make_test_map_terrain_cfg(env_cfg.scene.num_envs, env_cfg.scene.env_spacing)
+    env_cfg.scene.robot.init_state.pos = TEST_MAP_START_POS
+    env_cfg.scene.robot.init_state.rot = TEST_MAP_START_ROT
+    env_cfg.episode_length_s = TEST_MAP_EPISODE_LENGTH_S
+
+    env_cfg.events.reset_base.func = custom_mdp.reset_root_state_on_shared_map
+    env_cfg.events.reset_base.params = {
+        "base_pos": TEST_MAP_START_POS,
+        "base_rot": TEST_MAP_START_ROT,
+        "xy_range": TEST_MAP_START_POS_JITTER_XY,
+        "asset_cfg": SceneEntityCfg("robot"),
+    }
+    if hasattr(env_cfg.events, "push_robot"):
+        env_cfg.events.push_robot = None
+
+    env_cfg.observations.policy.goal_distance = ObsTerm(
+        func=custom_mdp.goal_distance_axis,
+        params={"goal": TEST_MAP_GOAL_Y, "start": TEST_MAP_START_POS[1], "axis": "y", "normalize": True},
+    )
+    env_cfg.terminations.goal_reached = DoneTerm(
+        func=custom_mdp.goal_reached_axis,
+        params={"goal": TEST_MAP_GOAL_Y, "start": TEST_MAP_START_POS[1], "axis": "y"},
+    )
+    env_cfg.terminations.out_of_bounds = DoneTerm(
+        func=custom_mdp.out_of_bounds,
+        params={"x_bounds": TEST_MAP_BOUNDS_X, "y_bounds": TEST_MAP_BOUNDS_Y},
+    )
+
+    if getattr(env_cfg.rewards, "goal_progress", None) is not None:
+        progress_params = dict(env_cfg.rewards.goal_progress.params)
+        progress_params.pop("goal_x", None)
+        progress_params.pop("start_x", None)
+        progress_params.update({"goal": TEST_MAP_GOAL_Y, "start": TEST_MAP_START_POS[1], "axis": "y"})
+        progress_func = env_cfg.rewards.goal_progress.func
+        if progress_func is custom_mdp.gated_goal_progress_delta:
+            progress_func = custom_mdp.gated_goal_progress_delta_axis
+        elif progress_func is custom_mdp.goal_progress_delta:
+            progress_func = custom_mdp.goal_progress_delta_axis
+        env_cfg.rewards.goal_progress = RewTerm(
+            func=progress_func,
+            weight=env_cfg.rewards.goal_progress.weight,
+            params=progress_params,
+        )
+
+    if getattr(env_cfg.rewards, "goal_reached_bonus", None) is not None:
+        bonus_params = dict(env_cfg.rewards.goal_reached_bonus.params)
+        bonus_params.pop("goal_x", None)
+        bonus_params.pop("start_x", None)
+        bonus_params.update({"goal": TEST_MAP_GOAL_Y, "start": TEST_MAP_START_POS[1], "axis": "y"})
+        bonus_func = env_cfg.rewards.goal_reached_bonus.func
+        if bonus_func is custom_mdp.time_remaining_goal_bonus:
+            bonus_func = custom_mdp.time_remaining_goal_bonus_axis
+        elif bonus_func is custom_mdp.goal_reached_bonus:
+            bonus_func = custom_mdp.goal_reached_bonus_axis
+        env_cfg.rewards.goal_reached_bonus = RewTerm(
+            func=bonus_func,
+            weight=env_cfg.rewards.goal_reached_bonus.weight,
+            params=bonus_params,
+        )
+
+    if getattr(env_cfg.rewards, "completion_time_metric", None) is not None:
+        env_cfg.rewards.completion_time_metric = RewTerm(
+            func=custom_mdp.completion_time_metric_axis,
+            weight=env_cfg.rewards.completion_time_metric.weight,
+            params={"goal": TEST_MAP_GOAL_Y, "start": TEST_MAP_START_POS[1], "axis": "y"},
+        )
+
+    if getattr(env_cfg.rewards, "forward_speed", None) is not None:
+        env_cfg.rewards.forward_speed = RewTerm(
+            func=custom_mdp.forward_velocity_toward_goal_axis,
+            weight=env_cfg.rewards.forward_speed.weight,
+            params={"goal": TEST_MAP_GOAL_Y, "axis": "y"},
+        )
+
+
+@configclass
+class FinalProjectUnitreeH1TestMapRoughGoalBaselineEnvCfg_PLAY(FinalProjectUnitreeH1RoughGoalBaselineEnvCfg_PLAY):
+    """Play RoughGoal policy weights on the packaged full test_map.usd corridor."""
+
+    def finalize_after_overrides(self):
+        _configure_test_map_play_cfg(self)
+
+
+@configclass
+class FinalProjectUnitreeH1TestMapSpeedRunEnvCfg_PLAY(FinalProjectUnitreeH1SpeedRunEnvCfg_PLAY):
+    """Play SpeedRun policy weights on the packaged full test_map.usd corridor."""
+
+    def finalize_after_overrides(self):
+        _configure_test_map_play_cfg(self)
+
+
 @configclass
 class FinalProjectUnitreeH1FastWalkEnvCfg(FinalProjectUnitreeH1RoughGoalBaselineEnvCfg):
     """Fast-walk: fastest upright goal reaching; fall-forward blocked by speed-gated progress.
@@ -1872,11 +1984,17 @@ class FinalProjectUnitreeH1StabilityArenaEnvCfg(FinalProjectUnitreeH1EnvCfg):
         if "num_envs" in overrides:
             self.scene.num_envs = int(overrides["num_envs"])
         if "lin_vel_x" in overrides:
-            self.commands.base_velocity.ranges.lin_vel_x = _tuple2(overrides["lin_vel_x"], self.commands.base_velocity.ranges.lin_vel_x)
+            self.commands.base_velocity.ranges.lin_vel_x = _tuple2(
+                overrides["lin_vel_x"], self.commands.base_velocity.ranges.lin_vel_x
+            )
         if "lin_vel_y" in overrides:
-            self.commands.base_velocity.ranges.lin_vel_y = _tuple2(overrides["lin_vel_y"], self.commands.base_velocity.ranges.lin_vel_y)
+            self.commands.base_velocity.ranges.lin_vel_y = _tuple2(
+                overrides["lin_vel_y"], self.commands.base_velocity.ranges.lin_vel_y
+            )
         if "ang_vel_z" in overrides:
-            self.commands.base_velocity.ranges.ang_vel_z = _tuple2(overrides["ang_vel_z"], self.commands.base_velocity.ranges.ang_vel_z)
+            self.commands.base_velocity.ranges.ang_vel_z = _tuple2(
+                overrides["ang_vel_z"], self.commands.base_velocity.ranges.ang_vel_z
+            )
         if "resampling_time_range" in overrides:
             self.commands.base_velocity.resampling_time_range = _tuple2(
                 overrides["resampling_time_range"], self.commands.base_velocity.resampling_time_range

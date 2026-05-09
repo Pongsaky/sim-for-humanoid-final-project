@@ -25,6 +25,7 @@ INSTALL_REQUIRES = [
 setup(
     name="myproject",
     packages=["myproject"],
+    package_data={"myproject": ["assets/**/*.json", "assets/**/*.usd", "assets/**/*.usda"]},
     author=EXTENSION_TOML_DATA["package"]["author"],
     maintainer=EXTENSION_TOML_DATA["package"]["maintainer"],
     url=EXTENSION_TOML_DATA["package"]["repository"],

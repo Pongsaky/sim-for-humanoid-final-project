@@ -12,6 +12,31 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+def _axis_index(axis: str) -> int:
+    if axis == "x":
+        return 0
+    if axis == "y":
+        return 1
+    raise ValueError(f"Unsupported axis '{axis}'. Expected 'x' or 'y'.")
+
+
+def goal_reached_axis(
+    env: ManagerBasedRLEnv,
+    goal: float,
+    start: float | None = None,
+    axis: str = "x",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> "torch.Tensor":
+    """Terminate episode when robot base crosses the goal line on the selected world axis."""
+    asset = env.scene[asset_cfg.name]
+    axis_idx = _axis_index(axis)
+    if start is None:
+        goal_line = env.scene.env_origins[:, axis_idx] + goal
+    else:
+        goal_line = asset.data.root_pos_w[:, axis_idx].new_full((env.num_envs,), float(start + goal))
+    return asset.data.root_pos_w[:, axis_idx] >= goal_line
+
+
 def goal_reached(
     env: ManagerBasedRLEnv,
     goal_x: float,
@@ -19,12 +44,7 @@ def goal_reached(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> "torch.Tensor":
     """Terminate episode when robot base crosses the goal line in +x for each env."""
-    asset = env.scene[asset_cfg.name]
-    if start_x is None:
-        goal_line_x = env.scene.env_origins[:, 0] + goal_x
-    else:
-        goal_line_x = asset.data.root_pos_w[:, 0].new_full((env.num_envs,), float(start_x + goal_x))
-    return asset.data.root_pos_w[:, 0] >= goal_line_x
+    return goal_reached_axis(env=env, goal=goal_x, start=start_x, axis="x", asset_cfg=asset_cfg)
 
 
 def goal_reached_upright(

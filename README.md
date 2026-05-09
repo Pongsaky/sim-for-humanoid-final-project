@@ -93,6 +93,13 @@ Play a trained checkpoint:
 python scripts/rsl_rl/play.py --task Template-Final-Project-Unitree-H1-Stability-Arena-Play-v0 --headless
 ```
 
+Play the packaged full `test_map.usd` with existing final-project weights:
+
+```bash
+python scripts/rsl_rl/play.py --task Template-Final-Project-Unitree-H1-TestMap-RoughGoal-Play-v0 --headless
+python scripts/rsl_rl/play.py --task Template-Final-Project-Unitree-H1-TestMap-SpeedRun-Play-v0 --headless
+```
+
 Notes:
 
 - `--headless` is recommended for training stability and lower GPU memory usage.
@@ -113,14 +120,19 @@ Main task families registered by `myproject`:
   Warm-up on curated easy terrain
 - `Template-Final-Project-Unitree-H1-Crossing-Arena-v0`
   Transfer stage on mixed curated terrain
+- `Template-Final-Project-Unitree-H1-TestMap-RoughGoal-Play-v0`
+  Play-only evaluation on the full packaged `test_map.usd` using RoughGoal weights
+- `Template-Final-Project-Unitree-H1-TestMap-SpeedRun-Play-v0`
+  Play-only evaluation on the full packaged `test_map.usd` using SpeedRun weights
 
-Each family also has a `-Play-v0` variant for evaluation.
+Except for the test-map entries, each family also has a `-Play-v0` variant for evaluation.
 
 ## Asset Notes
 
 Project assets are stored inside the package:
 
 - `source/myproject/myproject/assets/environments/final_map_2.usd`
+- `source/myproject/myproject/assets/environments/test_map.usd`
 - `source/myproject/myproject/assets/environments/curriculum_arenas/stability_arena.usda`
 - `source/myproject/myproject/assets/environments/curriculum_arenas/crossing_arena.usda`
 
