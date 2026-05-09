@@ -28,6 +28,12 @@ parser.add_argument(
     help="Optional path to write a compact evaluation summary as JSON.",
 )
 parser.add_argument(
+    "--disable-completion-hud",
+    action="store_true",
+    default=False,
+    help="Disable the Isaac Sim HUD window that shows current and best completion time during play.",
+)
+parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument(
@@ -112,6 +118,70 @@ def _resolve_play_task_name(task_name: str | None) -> str | None:
         print(f"[INFO] Replacing task '{task_name}' with play task '{play_task_name}'.")
         return play_task_name
     return task_name
+
+
+def _mask_to_list(mask_like, expected_len: int) -> list[bool]:
+    """Convert a scalar/list/tensor done mask to a flat Python bool list."""
+
+    if isinstance(mask_like, torch.Tensor):
+        flat = mask_like.detach().reshape(-1).to(device="cpu", dtype=torch.bool).tolist()
+    elif isinstance(mask_like, (list, tuple)):
+        flat = [bool(v) for v in mask_like]
+    else:
+        flat = [bool(mask_like)]
+
+    if len(flat) == expected_len:
+        return flat
+    if len(flat) == 1 and expected_len > 1:
+        return flat * expected_len
+    return (flat + [False] * expected_len)[:expected_len]
+
+
+class _CompletionHud:
+    """Small Isaac Sim HUD for current and best wall-clock completion time."""
+
+    def __init__(self):
+        self._window = None
+        self._round_label = None
+        self._status_label = None
+        self._current_label = None
+        self._best_label = None
+
+        try:
+            import omni.ui as ui
+        except ImportError:
+            return
+
+        self._window = ui.Window(
+            "Completion Time",
+            width=300,
+            height=130,
+            visible=True,
+            dock_preference=ui.DockPreference.RIGHT_TOP,
+        )
+        with self._window.frame:
+            with ui.VStack(spacing=4):
+                self._round_label = ui.Label("Round: 1")
+                self._status_label = ui.Label("Status: waiting")
+                self._current_label = ui.Label("Current Time: 0.00s")
+                self._best_label = ui.Label("Best Wall Time: --")
+
+    @property
+    def enabled(self) -> bool:
+        return self._window is not None
+
+    def update(self, round_idx: int, status: str, current_s: float | None, best_s: float | None) -> None:
+        if not self.enabled:
+            return
+        self._round_label.text = f"Round: {round_idx}"
+        self._status_label.text = f"Status: {status}"
+        self._current_label.text = f"Current Time: {0.0 if current_s is None else current_s:.2f}s"
+        self._best_label.text = f"Best Wall Time: {'--' if best_s is None else f'{best_s:.2f}s'}"
+
+    def close(self) -> None:
+        if self._window is not None:
+            self._window.visible = False
+            self._window = None
 
 
 args_cli.task = _resolve_play_task_name(args_cli.task)
@@ -219,7 +289,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
     export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
 
-    dt = env.unwrapped.step_dt
+    base_env = env.unwrapped
+    dt = base_env.step_dt
+    episode_round = 1
+    best_completion_time_s: float | None = None
+    round_wall_start_time = time.perf_counter()
+    hud = None if args_cli.disable_completion_hud or base_env.num_envs != 1 else _CompletionHud()
+    if hud is not None and hud.enabled:
+        hud.update(round_idx=episode_round, status="running", current_s=0.0, best_s=best_completion_time_s)
 
     # reset environment
     obs = env.get_observations()
@@ -235,6 +312,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actions = policy(obs)
             # env stepping
             obs, _, dones, extras = env.step(actions)
+            done_mask = _mask_to_list(dones, base_env.num_envs)
             # reset recurrent states for episodes that have terminated
             policy_nn.reset(dones)
             if "episode" in extras:
@@ -250,6 +328,41 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             # Collect per-episode goal completion times written by completion_time_metric.
             for t in extras.get("completion_times_s", []):
                 completion_times.append(float(t))
+            if base_env.num_envs == 1:
+                current_time_s = time.perf_counter() - round_wall_start_time
+                goal_events = extras.get("completion_times_s", [])
+                if goal_events:
+                    completion_time_s = current_time_s
+                    best_completion_time_s = (
+                        completion_time_s
+                        if best_completion_time_s is None
+                        else min(best_completion_time_s, completion_time_s)
+                    )
+                    if hud is not None and hud.enabled:
+                        hud.update(
+                            round_idx=episode_round,
+                            status="goal reached",
+                            current_s=completion_time_s,
+                            best_s=best_completion_time_s,
+                        )
+                elif hud is not None and hud.enabled:
+                    hud.update(
+                        round_idx=episode_round,
+                        status="running",
+                        current_s=current_time_s,
+                        best_s=best_completion_time_s,
+                    )
+
+                if done_mask[0]:
+                    episode_round += 1
+                    round_wall_start_time = time.perf_counter()
+                    if hud is not None and hud.enabled:
+                        hud.update(
+                            round_idx=episode_round,
+                            status="running",
+                            current_s=0.0,
+                            best_s=best_completion_time_s,
+                        )
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
@@ -293,6 +406,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             }
         with open(args_cli.summary_json, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, sort_keys=True)
+
+    if hud is not None:
+        hud.close()
 
     # close the simulator
     env.close()
